@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MUTANT CAMEL WARP &mdash; AMC II</title>
+<meta name="description" content="A retro keyboard shoot-'em-up inspired by Llamasoft's Attack of the Mutant Camels (1983).">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#129415;</text></svg>">
+</head>
+<body>
+  <main id="cabinet">
+    <div id="bezel">
+      <canvas id="screen" width="320" height="200" aria-label="Mutant Camel Warp game screen"></canvas>
+      <div id="crt" aria-hidden="true"></div>
+    </div>
+    <p id="hint">
+      <b>&#9664; &#9654; &#9650; &#9660;</b> / <b>WASD</b> fly
+      &nbsp;&middot;&nbsp; <b>SPACE</b> fire
+      &nbsp;&middot;&nbsp; <b>ENTER</b> start
+      &nbsp;&middot;&nbsp; <b>P</b> pause
+      &nbsp;&middot;&nbsp; <b>M</b> sound
+    </p>
+  </main>
+  <script src="js/font.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/sprites.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
