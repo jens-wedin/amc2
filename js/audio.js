@@ -242,6 +242,24 @@
         tone({ freq: midi(n[j]), dur: 0.9, type: 'square', vol: 0.12, delay: j * 0.05 });
       }
     },
+    /* ---- retro easter eggs ---- */
+    boing: function () {
+      tone({ freq: 180, to: 620, dur: 0.13, type: 'sine', vol: 0.22 });
+      tone({ freq: 90, to: 300, dur: 0.16, type: 'triangle', vol: 0.16 });
+    },
+    gridSweep: function () {
+      tone({ freq: 2600, to: 180, dur: 0.55, type: 'square', vol: 0.16 });
+      noise({ freq: 5000, to: 300, dur: 0.55, vol: 0.2, type: 'bandpass', q: 2 });
+    },
+    tapeLoad: function () {
+      /* the two-tone shriek of a tape loader, mercifully brief */
+      for (var i = 0; i < 26; i++) {
+        tone({ freq: i % 2 ? 1180 : 2360, dur: 0.1, type: 'square',
+               vol: 0.05, delay: i * 0.115 });
+      }
+      noise({ freq: 2600, dur: 3.0, vol: 0.045, type: 'bandpass', q: 0.7 });
+    },
+
     blip: function () {
       tone({ freq: 880, dur: 0.05, type: 'square', vol: 0.14 });
     },

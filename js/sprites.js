@@ -104,6 +104,27 @@
     rect(ctx, x + 13, feetY - 18, 1, 1, C.black);
   }
 
+  /* ---- the Boing ball ----------------------------------------------
+   * The Amiga's calling card: a checkered sphere that will not stop
+   * bouncing. The checker pattern is offset by `spin`, which is what
+   * sells the rotation.
+   */
+  function drawBoing(ctx, cx, cy, rad, spin) {
+    var cell = Math.max(2, Math.round(rad / 2.4));
+    cx = Math.round(cx); cy = Math.round(cy);
+    for (var dy = -rad; dy < rad; dy++) {
+      var hw = Math.floor(Math.sqrt(rad * rad - dy * dy));
+      if (hw <= 0) continue;
+      /* keyline run first, then the checker over it */
+      rect(ctx, cx - hw - 1, cy + dy, hw * 2 + 2, 1, C.black);
+      var v = Math.floor((dy + rad) / cell);
+      for (var dx = -hw; dx < hw; dx++) {
+        var u = Math.floor((dx + rad + spin) / cell);
+        rect(ctx, cx + dx, cy + dy, 1, 1, ((u + v) & 1) ? C.white : C.lightred);
+      }
+    }
+  }
+
   /* ---- terrain ------------------------------------------------------
    * Parallax ridges plus the strip the beasts walk on.
    */
@@ -196,6 +217,7 @@
     mulberry32: mulberry32,
     drawShip: drawShip,
     drawLlama: drawLlama,
+    drawBoing: drawBoing,
     drawTerrain: drawTerrain,
     drawBase: drawBase,
     makeStars: makeStars,

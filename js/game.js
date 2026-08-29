@@ -40,7 +40,7 @@
   /* ---- runtime ------------------------------------------------------ */
   var canvas, ctx;
   var keys = {}, pressed = {};
-  var state = 'title';
+  var state = 'boot';
   var stateTime = 0;
   var t = 0;
   var paused = false;
@@ -58,6 +58,15 @@
   var hyperTimer = 0, hyperLength = 0;
   var message = null;
   var revealSp = null;
+
+  /* ---- retro easter eggs ---- */
+  var boing = null;              /* Amiga: the bouncing checkered ball */
+  var neutral = null;            /* Atari: the shimmering neutral zone */
+  var gridSweep = 0;             /* VIC-20: Gridrunner-style smart bomb */
+  var raster = 0;                /* C64: rasterbar flash */
+  var RASTER_TIME = 0.45;
+  var hintPage = 0, hintTimer = 0;
+  var scrollX = 0;
 
   /* =================================================================
    * campaign maths
@@ -100,7 +109,8 @@
     ArrowDown: 'down', KeyS: 'down',
     Space: 'fire', KeyJ: 'fire',
     Enter: 'start', NumpadEnter: 'start',
-    KeyP: 'pause', KeyM: 'mute', Escape: 'pause'
+    KeyP: 'pause', KeyM: 'mute', Escape: 'pause',
+    KeyH: 'hints'
   };
 
   function onKeyDown(e) {
@@ -189,6 +199,7 @@
     particles = [];
     floaters = [];
     llama = null;
+    boing = null;
     killBonus = 100;
     resetPlayer(true);
     state = 'intro';
@@ -395,6 +406,18 @@
         }
         if (bt.hp <= 0) destabilise(bt, sp);
       }
+      if (!consumed && boing && !boing.dead &&
+          Math.abs(bl.x - boing.x) < boing.r + 2 && Math.abs(bl.y - boing.y) < boing.r + 2) {
+        consumed = true;
+        bullets.splice(i, 1);
+        boing.dead = true;
+        addScore(2000);
+        floater(boing.x - 10, boing.y - 18, '2000', C.lightred, 1.8);
+        burst(boing.x, boing.y, 34, 150, [C.white, C.lightred, C.lightgrey], 2, 1.1);
+        Sound.bonus();
+        flash = 0.08; flashCol = C.white;
+        raster = RASTER_TIME;
+      }
       if (!consumed && llama && !llama.dead &&
           bl.x > llama.x && bl.x < llama.x + 18 &&
           bl.y > llama.feetY - 22 && bl.y < llama.feetY) {
@@ -405,6 +428,11 @@
         burst(llama.x + 8, llama.feetY - 10, 26, 110, CYCLE, 2, 0.9);
         Sound.llama();
         flash = 0.08; flashCol = C.lightgreen;
+        /* VIC-20 easter egg: the grid sweeps the screen clean */
+        gridSweep = 0.7;
+        shots.length = 0;
+        message = { text: 'GRID SWEEP', time: 1.2, col: C.lightgreen };
+        Sound.gridSweep();
       }
     }
 
@@ -425,6 +453,7 @@
           burst(b.x, b.feetY - 30, 60, 190, CYCLE, 3, 1.3);
           shake = Math.max(shake, 7);
           flash = 0.09; flashCol = C.white;
+          raster = RASTER_TIME;
           beasts.splice(k, 1);
         }
         continue;
@@ -455,6 +484,31 @@
     }
 
     updateShots(dt);
+
+    /* --- Amiga easter egg: the Boing ball will not stop bouncing --- */
+    if (!boing && Math.random() < dt * 0.022) {
+      var right = Math.random() < 0.5;
+      boing = {
+        x: right ? camX + VW + 20 : camX - 20,
+        y: FLY_TOP + 20,
+        vx: (right ? -1 : 1) * rnd(48, 74),
+        vy: 0, r: 9, spin: 0, dead: false
+      };
+    }
+    if (boing) {
+      boing.x += boing.vx * dt;
+      boing.y += boing.vy * dt;
+      boing.vy += 240 * dt;
+      boing.spin += (boing.vx > 0 ? 1 : -1) * dt * 26;
+      if (boing.y + boing.r >= GROUND_Y) {
+        boing.y = GROUND_Y - boing.r;
+        boing.vy = -Math.abs(boing.vy) * 0.86;
+        if (Math.abs(boing.vy) < 60) boing.vy = -170;
+        burst(boing.x, GROUND_Y, 5, 50, [C.white, C.lightred], 1, 0.3);
+        Sound.boing();
+      }
+      if (boing.dead || boing.x < camX - 90 || boing.x > camX + VW + 90) boing = null;
+    }
 
     /* --- bonus llama, the constant in a changing bestiary --- */
     if (!llama && Math.random() < dt * 0.06) {
@@ -588,6 +642,13 @@
       warpLines.push({ x: Math.random() * VW, y: rnd(HUD_H + 4, SCAN_Y - 4),
                        v: rnd(220, 560), len: rnd(5, 16) });
     }
+    /* Atari easter egg: from act two, a shimmering neutral zone drifts
+       through the corridor. Nothing gets through it -- including you,
+       if you can find it and sit still. */
+    neutral = actIndex(level) >= 1
+      ? { x: 150, w: Math.max(16, 30 - actIndex(level) * 3), drift: rnd(0, 6.28) }
+      : null;
+    if (neutral) message = { text: 'NEUTRAL ZONE DETECTED', time: 2.6, col: C.cyan };
     player.x = 40; player.y = VH / 2;
     player.vx = 0; player.vy = 0;
     player.invuln = 1.0;
@@ -636,12 +697,23 @@
       missiles.push(m);
     }
 
+    if (neutral) {
+      neutral.drift += dt * 0.55;
+      neutral.x = VW / 2 + Math.sin(neutral.drift) * 76;
+    }
+
     for (var mi = missiles.length - 1; mi >= 0; mi--) {
       var ms = missiles[mi];
       ms.x += ms.vx * dt;
       ms.phase += dt * 5;
       ms.y = ms.y0 + Math.sin(ms.phase) * ms.wave;
       if (ms.x < -40 || ms.x > VW + 40) { missiles.splice(mi, 1); continue; }
+      if (neutral && ms.x + 12 > neutral.x - neutral.w / 2 &&
+          ms.x < neutral.x + neutral.w / 2) {
+        burst(ms.x, ms.y + 2, 8, 70, CYCLE, 1, 0.4);
+        missiles.splice(mi, 1);
+        continue;
+      }
       if (player.invuln <= 0 &&
           ms.x + 10 > player.x + 2 && ms.x < player.x + SHIP_W - 2 &&
           ms.y + 3 > player.y + 1 && ms.y < player.y + SHIP_H - 1) {
@@ -680,6 +752,8 @@
     }
     if (shake > 0) shake = Math.max(0, shake - dt * 26);
     if (flash > 0) flash -= dt;
+    if (raster > 0) raster -= dt;
+    if (gridSweep > 0) gridSweep -= dt;
     if (message) {
       message.time -= dt;
       if (message.time <= 0) message = null;
@@ -719,9 +793,33 @@
       message = { text: m ? 'SOUND OFF' : 'SOUND ON', time: 1.0, col: C.cyan };
     }
 
+    if (state === 'boot') {
+      /* any key drops you straight into the game, as it should */
+      if (tapped('start') || tapped('fire') || tapped('hints') ||
+          tapped('pause') || stateTime > BOOT_END) {
+        state = 'title';
+        stateTime = 0;
+        Sound.playMusic('title');
+      } else if (stateTime > 2.55 && stateTime - dt <= 2.55) {
+        Sound.tapeLoad();
+      }
+      return;
+    }
+
     if (state === 'title') {
       Sound.playMusic('title');
-      if (tapped('start') || tapped('fire')) newGame();
+      scrollX += dt * 46;
+      if (tapped('hints')) { state = 'hints'; stateTime = 0; hintTimer = 0; Sound.blip(); }
+      else if (tapped('start') || tapped('fire')) newGame();
+      updateFx(dt);
+      return;
+    }
+
+    if (state === 'hints') {
+      hintTimer += dt;
+      if (tapped('hints') || tapped('start')) { state = 'title'; stateTime = 0; Sound.blip(); }
+      if (tapped('left')) { hintPage--; hintTimer = 0; Sound.blip(); }
+      if (tapped('right') || hintTimer > 7) { hintPage++; hintTimer = 0; }
       updateFx(dt);
       return;
     }
@@ -774,6 +872,7 @@
           Sound.revealHit();
           flash = 0.16; flashCol = C.white;
           shake = 9;
+          raster = RASTER_TIME;
         }
         if (stateTime > 8.6) {
           startLevel(level + 1);
@@ -902,6 +1001,12 @@
 
     if (BASE_X - camX < VW + 60) Art.drawBase(ctx, BASE_X - camX, GROUND_Y, t);
     if (llama) Art.drawLlama(ctx, llama.x - camX, llama.feetY, llama.phase, t);
+    if (boing) {
+      var bx = boing.x - camX;
+      var drop = clamp(1 - (GROUND_Y - boing.y) / 120, 0.25, 1);
+      Art.rect(ctx, bx - 8 * drop, GROUND_Y + 1, 16 * drop, 2, C.black);
+      Art.drawBoing(ctx, bx, boing.y, boing.r, boing.spin);
+    }
 
     for (var i = 0; i < beasts.length; i++) {
       var b = beasts[i];
@@ -961,6 +1066,18 @@
       Art.rect(ctx, 0, y, VW, 1, CYCLE[(b + Math.floor(t * 4)) % CYCLE.length]);
       ctx.globalAlpha = 1;
     }
+    /* the neutral zone: a column of pure shimmer, redrawn every frame */
+    if (neutral) {
+      var nx = Math.round(neutral.x - neutral.w / 2);
+      Art.rect(ctx, nx - 1, HUD_H + 2, 1, SCAN_Y - HUD_H - 4, C.darkgrey);
+      Art.rect(ctx, nx + neutral.w, HUD_H + 2, 1, SCAN_Y - HUD_H - 4, C.darkgrey);
+      for (var q = 0; q < 420; q++) {
+        Art.rect(ctx, nx + Math.random() * neutral.w,
+                 HUD_H + 3 + Math.random() * (SCAN_Y - HUD_H - 6), 1, 2,
+                 CYCLE[(Math.random() * CYCLE.length) | 0]);
+      }
+    }
+
     for (var m = 0; m < missiles.length; m++) {
       var mi = missiles[m];
       var dir = mi.vx > 0 ? 1 : -1;
@@ -1045,6 +1162,132 @@
     }
   }
 
+  /* ---- C64 tape-loader boot ------------------------------------------
+   * A pastiche, not a copy: the machine, the byte count and the file
+   * name are all this game's. The colour bars are the real memory.
+   */
+  var BOOT_END = 7.6;
+
+  function drawBoot() {
+    var s = stateTime;
+    /* the famous blue-on-blue, straight out of the palette */
+    var SCREEN = C.blue, BORDER = C.lightblue;
+
+    /* the loader paints the whole raster while it reads the tape */
+    if (s > 2.6 && s < 6.4) {
+      for (var i = 0; i < 70; i++) {
+        Art.rect(ctx, 0, Math.random() * VH, VW, 1 + Math.random() * 3,
+                 CYCLE[(Math.random() * CYCLE.length) | 0]);
+      }
+      Art.rect(ctx, 30, 84, 260, 30, C.black);
+      Font.center(ctx, s < 4.2 ? 'SEARCHING FOR AMA' : 'LOADING', VW / 2, 92, C.white, 1);
+      Font.center(ctx, 'PRESS ANY KEY TO SKIP', VW / 2, 104, C.grey, 1);
+      return;
+    }
+
+    Art.rect(ctx, 0, 0, VW, VH, BORDER);
+    Art.rect(ctx, 16, 14, VW - 32, VH - 28, SCREEN);
+
+    var L = 22, y = 22;
+    function line(txt) { Font.draw(ctx, txt, L, y, BORDER, 1); y += 10; }
+
+    if (s > 0.15) line('    **** AMA SYSTEM 64 BASIC V2 ****');
+    if (s > 0.5) { y += 4; line(' 38911 MUTANT BYTES FREE'); }
+    if (s > 0.9) { y += 4; line('READY.'); }
+
+    if (s > 1.2) {
+      /* the LOAD line types itself in */
+      var cmd = 'LOAD "AMA",1,1';
+      var shown = cmd.slice(0, Math.floor((s - 1.2) * 14));
+      Font.draw(ctx, shown, L, y, BORDER, 1);
+      if (Math.floor(s * 3) % 2 === 0 && s < 2.3) {
+        Art.rect(ctx, L + Font.width(shown, 1) + 1, y - 1, 5, 8, BORDER);
+      }
+      y += 14;
+    }
+    if (s > 2.2) line('PRESS PLAY ON TAPE');
+
+    if (s > 6.4) {
+      y = 22;
+      Art.rect(ctx, 16, 14, VW - 32, VH - 28, SCREEN);
+      line('READY.');
+      line('RUN');
+      if (Math.floor(s * 6) % 2 === 0) Art.rect(ctx, L, y + 1, 5, 8, BORDER);
+    }
+
+    if (s < 2.6) Font.center(ctx, 'PRESS ANY KEY TO SKIP', VW / 2, VH - 26, C.purple, 1);
+  }
+
+  /* ---- the hint book -------------------------------------------------- */
+  function wrap(text, cols) {
+    var words = text.split(' '), lines = [], cur = '';
+    for (var i = 0; i < words.length; i++) {
+      var next = cur ? cur + ' ' + words[i] : words[i];
+      if (next.length > cols && cur) { lines.push(cur); cur = words[i]; }
+      else cur = next;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  function drawHints() {
+    var list = Hints.HINTS;
+    var h = list[((hintPage % list.length) + list.length) % list.length];
+    var mach = Hints.MACHINES[h.m];
+
+    Art.rect(ctx, 0, 0, VW, VH, C.black);
+    Art.drawStars(ctx, stars, t * 8, t);
+
+    Font.centerShadow(ctx, 'THE HINT BOOK', VW / 2, 8,
+                      CYCLE[Math.floor(t * 8) % CYCLE.length], C.black, 2);
+    Art.rect(ctx, 40, 26, 240, 1, C.darkgrey);
+
+    mach.badge(ctx, VW / 2 - 20, 34);
+    Font.center(ctx, mach.name, VW / 2, 66, mach.tint, 1);
+
+    var lines = wrap(h.t, 46);
+    for (var i = 0; i < lines.length; i++) {
+      Font.center(ctx, lines[i], VW / 2, 86 + i * 11, C.white, 1);
+    }
+
+    if (h.here && Math.floor(t * 3) % 2 === 0) {
+      Font.center(ctx, '> ALSO TRUE IN THIS GAME <', VW / 2, 138, C.lightgreen, 1);
+    }
+
+    /* page pips, grouped by machine */
+    var per = 5;
+    for (var p = 0; p < list.length; p++) {
+      var on = p === (((hintPage % list.length) + list.length) % list.length);
+      var gx = 68 + (p % per) * 8 + Math.floor(p / per) * 46;
+      Art.rect(ctx, gx, 156, on ? 5 : 3, on ? 5 : 3,
+               on ? C.white : Hints.MACHINES[list[p].m].tint);
+    }
+
+    Art.rect(ctx, 0, SCAN_Y, VW, SCAN_H, C.black);
+    Font.center(ctx, '< AND > TURN THE PAGE      H OR ENTER CLOSES',
+                VW / 2, SCAN_Y + 4, C.grey, 1);
+  }
+
+  /* ---- demoscene greets scroller --------------------------------------
+   * One character at a time, each on its own sine offset, colours
+   * cycling along the line. It would not be a title screen without it.
+   */
+  function drawScroller(baseY) {
+    var txt = Hints.SCROLLER;
+    var cw = Font.width('A', 1) + 1;
+    var total = txt.length * cw;
+    if (scrollX > total) scrollX -= total;
+    var first = Math.floor(scrollX / cw) - 1;
+    for (var i = first; i < first + VW / cw + 3; i++) {
+      var idx = ((i % txt.length) + txt.length) % txt.length;
+      var ch = txt.charAt(idx);
+      if (ch === ' ') continue;
+      var x = i * cw - scrollX;
+      var y = baseY + Math.sin(t * 3.4 + i * 0.42) * 3;
+      Font.draw(ctx, ch, x, y, CYCLE[(i + Math.floor(t * 12)) % CYCLE.length], 1);
+    }
+  }
+
   function drawTitle() {
     Art.rect(ctx, 0, 0, VW, VH, C.black);
     Art.drawStars(ctx, stars, t * 22, t);
@@ -1057,7 +1300,8 @@
       feetY: GROUND_Y, hp: 20, maxHp: 26,
       phase: t * 4, rear: 0, dying: false, flash: 0, mouth: { x: 0, y: 0 }
     };
-    Beasts.drawBeast(ctx, demo, t, SPECIES[0]);
+    /* drawn at two thirds scale so it stays clear of the text above it */
+    Beasts.drawBeast(ctx, demo, t, SPECIES[0], 2);
 
     var c1 = CYCLE[Math.floor(t * 8) % CYCLE.length];
     var c2 = CYCLE[(Math.floor(t * 8) + 3) % CYCLE.length];
@@ -1070,15 +1314,12 @@
       Font.centerShadow(ctx, 'PRESS ENTER TO DEFEND THE BASE', VW / 2, 112, C.white, C.black, 1);
     }
 
-    /* the strip alternates between the controls and the one tactic
-       that carries across every species */
+    Font.centerShadow(ctx, 'ARROWS / WASD - FLY   SPACE - FIRE   H - HINTS',
+                      VW / 2, 124, C.cyan, C.black, 1);
+
     Art.rect(ctx, 0, SCAN_Y, VW, SCAN_H, C.black);
-    if (Math.floor(t / 3.5) % 2 === 0) {
-      Font.center(ctx, 'ARROWS / WASD - FLY   SPACE - FIRE   P - PAUSE   M - SOUND',
-                  VW / 2, SCAN_Y + 4, C.cyan, 1);
-    } else {
-      Font.center(ctx, 'AIM FOR THE MARKED WEAK SPOT', VW / 2, SCAN_Y + 4, C.yellow, 1);
-    }
+    Art.rect(ctx, 0, SCAN_Y - 1, VW, 1, C.darkgrey);
+    drawScroller(SCAN_Y + 4);
   }
 
   function drawOverlays() {
@@ -1139,19 +1380,49 @@
     }
   }
 
+  /* C64 rasterbars -- a band of colour sweeping the raster, the oldest
+     flourish in the book. */
+  function drawRaster() {
+    if (raster <= 0) return;
+    var p = 1 - raster / RASTER_TIME;
+    ctx.globalAlpha = 0.18 + 0.42 * (raster / RASTER_TIME);
+    for (var i = 0; i < 9; i++) {
+      Art.rect(ctx, 0, p * (VH + 70) - 70 + i * 8, VW, 7,
+               CYCLE[(i + Math.floor(t * 20)) % CYCLE.length]);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /* VIC-20 Gridrunner: the grid slams across and takes the shots with it. */
+  function drawGridSweep() {
+    if (gridSweep <= 0) return;
+    var p = 1 - gridSweep / 0.7;
+    ctx.globalAlpha = 0.25 + 0.5 * (gridSweep / 0.7);
+    var col = CYCLE[Math.floor(t * 26) % CYCLE.length];
+    var step = 16, off = Math.floor(p * step);
+    for (var x = -off; x < VW; x += step) Art.rect(ctx, x, HUD_H, 1, SCAN_Y - HUD_H, col);
+    for (var y = HUD_H + off; y < SCAN_Y; y += step) Art.rect(ctx, 0, y, VW, 1, col);
+    ctx.globalAlpha = 1;
+  }
+
   function render() {
     ctx.save();
     if (shake > 0.2) {
       ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
     }
 
-    if (state === 'title') drawTitle();
+    if (state === 'boot') drawBoot();
+    else if (state === 'title') drawTitle();
+    else if (state === 'hints') drawHints();
     else if (state === 'reveal') drawReveal();
     else if (state === 'hyper' || state === 'hyperclear') drawHyper();
     else if (state === 'over') Art.rect(ctx, 0, 0, VW, VH, C.black);
     else drawPlay();
 
-    if (state !== 'reveal') drawOverlays();
+    if (state !== 'reveal' && state !== 'boot' && state !== 'hints') drawOverlays();
+
+    drawGridSweep();
+    drawRaster();
 
     if (flash > 0) {
       ctx.globalAlpha = Math.min(0.75, flash * 5);
@@ -1235,6 +1506,16 @@
     },
     skip: function () { beasts.length = 0; },
     endWarp: function () { hyperTimer = 0.05; },
+    boot: function () { state = 'boot'; stateTime = 0; },
+    egg: function (which) {
+      if (which === 'boing') {
+        boing = { x: player.x + 70, y: FLY_TOP + 20, vx: -20, vy: 0,
+                  r: 9, spin: 0, dead: false };
+      } else if (which === 'llama') {
+        llama = { x: player.x + 60, feetY: GROUND_Y - 2, vx: -10, phase: 0, dead: false };
+      }
+    },
+    hints: function (n) { state = 'hints'; hintPage = n || 0; hintTimer = 0; },
     setLevel: function (n) { startLevel(n); Sound.playMusic('game'); },
     pushToBase: function () {
       if (beasts[0]) { beasts[0].x = BASE_X - 30; player.x = BASE_X - 240; }

@@ -22,6 +22,7 @@ classic `<script>` tags, not ES modules.
 | `ENTER` | Start / continue |
 | `P` or `ESC` | Pause |
 | `M` | Sound on/off |
+| `H` | The hint book (from the title screen) |
 
 ## How it plays
 
@@ -44,8 +45,8 @@ base and it costs you a ship.
 - **Clear the zone, then survive hyperspace.** With the herd down you are
   thrown into a warp corridor and have to dodge high-speed missiles on a timer
   for a per-zone bonus.
-- **Bonus llama.** Occasionally one bolts across the ground. 500 points. It is
-  the one animal on your side.
+- **Bonus llama.** Occasionally one bolts across the ground. 500 points, and
+  something rather more useful. It is the one animal on your side.
 
 **Thirty zones per species.** Clear zone 30 and the warp goes wrong. What comes
 out the other side is not what went in. Keep going and it will happen again —
@@ -56,6 +57,42 @@ destabilisation bonus starting at **100** and **doubling** for each beast
 killed in a zone (100 · 200 · 400 · 800 …). Hyperspace pays 1000 × zone. Extra
 ship every 15,000. Your Antimat cannon is upgraded a tier with each species
 shift, which is what keeps you level with their rising hit points.
+
+## Retro nods
+
+The whole thing boots the way these games used to. `LOAD "AMA",1,1`, then
+`PRESS PLAY ON TAPE`, then four seconds of the tape loader painting the entire
+raster in colour bars. Any key skips it, as any key always did.
+
+Press `H` on the title screen for **the hint book**: twenty tips in the voice of
+an eighties magazine hint column, five each for the **Commodore 64**, the
+**VIC-20**, the **Amiga** and the **Atari**, with a badge drawn for each machine
+— a cassette, a cartridge, a certain bouncing ball and a one-button joystick.
+
+Four of those hints are not nostalgia. They describe something that is actually
+true of this game, and the hint book flags them. Finding out which is half the
+fun, so they are behind the spoiler below.
+
+The title screen carries a sine-wave greets scroller, because it would not be a
+title screen without one, and big events flash C64 rasterbars across the raster.
+
+<details>
+<summary>Which four hints are real — don't open this if you'd rather find them.</summary>
+
+- **C64 — the loader.** The boot sequence is the hint. So is the SID one: every
+  note and explosion in the game is generated at runtime by oscillators and a
+  noise buffer, three-voices-and-a-filter style, with nothing loaded from disk.
+- **VIC-20 — the grid.** Shoot the bonus llama and Gridrunner's grid slams
+  across the screen and takes every enemy projectile with it. A smart bomb with
+  a pedigree.
+- **Amiga — the ball.** The Boing ball turns up in play, bouncing and spinning,
+  red and white check. Shoot it for 2000 points. It does not fight back; it
+  just refuses to stop bouncing.
+- **Atari — the neutral zone.** From act two onward a shimmering column drifts
+  through the hyperspace corridor. Nothing crosses it. Sit inside and the
+  missiles die at the edge, exactly as the Yars taught us.
+
+</details>
 
 ## Spoilers — the bestiary
 
@@ -128,7 +165,9 @@ Llamasoft's code or artwork.
 - Fixed **320×200** internal canvas — the C64's screen resolution — scaled up by
   whole integers only, with `image-rendering: pixelated`, so every game pixel
   stays a perfect square at any window size.
-- The **16-colour C64 palette** (VICE values) and nothing outside it.
+- The **16-colour C64 palette** (VICE values) for everything that moves. The
+  only colours outside it are the six near-black biome skies and the greys the
+  reveal silhouette fades up through.
 - All text is drawn with a hand-plotted **5×7 bitmap font** (`js/font.js`); no
   webfonts, no antialiasing.
 - Every animal is plotted on the same **30×24 unit grid** at 3px per unit
@@ -142,6 +181,10 @@ Llamasoft's code or artwork.
 - Audio is a small **WebAudio SID impersonator** (`js/audio.js`): pulse and
   sawtooth voices, a generated noise buffer for explosions, and a lookahead step
   sequencer running two chip tunes. Nothing is loaded from disk.
+- The boot loader, the greets scroller and the rasterbars are all drawn with the
+  same `fillRect` primitives as the rest of the game — the colour bars are just
+  seventy random horizontal runs per frame, which is roughly what the real thing
+  was doing too.
 - CSS supplies the CRT: bezel, scanlines, vignette and phosphor glow.
 
 ## Layout
@@ -153,6 +196,7 @@ js/font.js        5x7 bitmap font
 js/audio.js       WebAudio chiptune + SFX
 js/sprites.js     palette, ship, terrain, base, starfield, bonus llama
 js/beasts.js      the bestiary: species table + shared beast renderer
+js/hints.js       the hint book: twenty tips, four machine badges, the scroller
 js/game.js        campaign, state machine, entities, collision, HUD, main loop
 ```
 
@@ -162,4 +206,6 @@ High scores persist in `localStorage` under `ama.hiscore` / `ama.bestzone`.
 
 `AMA.debug()` dumps game state, `AMA.skip()` clears the current zone,
 `AMA.setLevel(n)` jumps to a zone (31, 61, 91, 121, 151 start each act),
-`AMA.endWarp()` cuts a hyperspace run short.
+`AMA.endWarp()` cuts a hyperspace run short, `AMA.boot()` replays the tape
+loader, `AMA.hints(n)` opens the hint book at a page, and `AMA.egg('boing')` /
+`AMA.egg('llama')` drop an easter egg in front of you.
