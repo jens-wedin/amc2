@@ -1,8 +1,10 @@
 /* ------------------------------------------------------------------
- * game.js -- MUTANT CAMEL WARP
+ * game.js -- ATTACK OF THE MUTANT ANIMALS (AMA)
+ *
  * A keyboard-driven homage to Llamasoft's "Attack of the Mutant
- * Camels" (Jeff Minter, 1983). 320x200 internal resolution, C64
- * palette, no assets, no dependencies.
+ * Camels" (Jeff Minter, 1983), extended into a campaign: every 30
+ * zones the herd is replaced by an entirely new species, unannounced.
+ * 320x200 internal resolution, C64 palette, no assets.
  * ------------------------------------------------------------------ */
 (function (global) {
   'use strict';
@@ -10,25 +12,28 @@
   var C = Art.C;
   var CYCLE = Art.CYCLE;
   /* Bright subset of the palette -- used for anything that must read
-     instantly against the mountains. */
+     instantly against the ridges. */
   var TRACER = [C.white, C.yellow, C.cyan, C.lightgreen];
+
+  var SPECIES = Beasts.SPECIES;
+  var ZONES_PER_ACT = 30;
+  var MAX_LEVEL = SPECIES.length * ZONES_PER_ACT;
 
   /* ---- fixed geometry ---------------------------------------------- */
   var VW = 320, VH = 200;
   var HUD_H = 12;
   var SCAN_Y = 186, SCAN_H = 14;
-  var GROUND_Y = 172;              /* where camel feet and player floor meet */
+  var GROUND_Y = 172;
   var SKY_TOP = HUD_H + 2;
   var FLY_TOP = SKY_TOP + 2;
   var FLY_BOTTOM = GROUND_Y - 10;
   var WORLD_W = 1680;
   var BASE_X = WORLD_W - 40;
-  var MAX_LEVEL = 30;
 
   /* ---- tunables ----------------------------------------------------- */
   var SHIP_W = 16, SHIP_H = 8;
   var ACCEL = 900, FRICTION = 6.5, MAX_VX = 128, MAX_VY = 104;
-  var BULLET_SPEED = 300, FIRE_COOLDOWN = 0.11, MAX_BULLETS = 6;
+  var BULLET_SPEED = 300, MAX_BULLETS = 6;
   var RESPAWN_INVULN = 2.2;
   var EXTRA_LIFE_EVERY = 15000;
 
@@ -41,17 +46,49 @@
   var paused = false;
 
   var score = 0, hiScore = 0, lives = 3, level = 1;
+  var bestZone = 0, won = false;
   var nextExtraLife = EXTRA_LIFE_EVERY;
-  var camelBonus = 100;
+  var killBonus = 100;
   var shake = 0, flash = 0, flashCol = C.white;
 
-  var player, camels, bullets, spits, particles, floaters, llama;
+  var player, beasts, bullets, shots, particles, floaters, llama;
   var missiles, warpLines;
   var stars = Art.makeStars(70, 340, GROUND_Y - 20, 4242);
   var camX = 0;
   var hyperTimer = 0, hyperLength = 0;
   var message = null;
-  var won = false;
+  var revealSp = null;
+
+  /* =================================================================
+   * campaign maths
+   * ================================================================= */
+  function actIndex(lv) {
+    return Math.min(SPECIES.length - 1, Math.floor((lv - 1) / ZONES_PER_ACT));
+  }
+  function zoneInAct(lv) { return ((lv - 1) % ZONES_PER_ACT) + 1; }
+  function speciesFor(lv) { return SPECIES[actIndex(lv)]; }
+  function isActFinale(lv) { return zoneInAct(lv) === ZONES_PER_ACT; }
+
+  function beastHp(lv) {
+    var sp = speciesFor(lv);
+    return Math.round(sp.hp * (1 + (zoneInAct(lv) - 1) * 0.065) * (1 + actIndex(lv) * 0.20));
+  }
+  function beastSpeed(lv) {
+    var sp = speciesFor(lv);
+    return Math.min(46, sp.speed * (1 + (zoneInAct(lv) - 1) * 0.03) * (1 + actIndex(lv) * 0.14));
+  }
+  function beastCount(lv) {
+    return Math.min(8, speciesFor(lv).count + Math.floor((zoneInAct(lv) - 1) / 10));
+  }
+  function shotSpeed(lv) {
+    return 62 + (zoneInAct(lv) - 1) * 3.5 + actIndex(lv) * 10;
+  }
+
+  /* Each species shift also upgrades the Antimat cannon, so the player
+     keeps pace with the rising hit points. */
+  function weaponTier(lv) { return actIndex(lv) + 1; }
+  function fireCooldown() { return Math.max(0.062, 0.11 - actIndex(level) * 0.008); }
+  function bulletDamage() { return 1 + Math.floor(actIndex(level) / 2); }
 
   /* =================================================================
    * input
@@ -74,14 +111,12 @@
     keys[k] = true;
     Sound.unlock();
   }
-
   function onKeyUp(e) {
     var k = KEYMAP[e.code];
     if (!k) return;
     e.preventDefault();
     keys[k] = false;
   }
-
   function tapped(k) { return !!pressed[k]; }
 
   /* =================================================================
@@ -115,8 +150,7 @@
       var a = Math.random() * Math.PI * 2;
       var s = rnd(speed * 0.2, speed);
       particles.push({
-        x: x, y: y,
-        vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
         life: rnd(0.25, life || 0.8), max: life || 0.8,
         col: cols[(Math.random() * cols.length) | 0],
         size: size || 2, grav: 40
@@ -127,41 +161,35 @@
   /* =================================================================
    * level setup
    * ================================================================= */
-  function camelCount(lv) { return Math.min(8, 4 + Math.floor((lv - 1) / 4)); }
-  function camelSpeed(lv) { return 11 + (lv - 1) * 1.1; }
-  function camelHp(lv) { return 50 + (lv - 1) * 5; }
-  function spitSpeed(lv) { return 62 + (lv - 1) * 4.5; }
-
-  function makeCamel(i, n, lv) {
-    /* Spread the herd along the first two thirds of the world so the
-       whole column is reachable, with the leaders already closing on
-       the base. */
+  function makeBeast(i, n, lv) {
     var spread = n > 1 ? (i / (n - 1)) : 0;
     var x0 = 250 + spread * 700 + rnd(-40, 40);
+    var hp = beastHp(lv);
     return {
-      x: x0,
-      feetY: GROUND_Y,
-      hp: camelHp(lv), maxHp: camelHp(lv),
-      speed: camelSpeed(lv) * rnd(0.85, 1.15),
+      x: x0, feetY: GROUND_Y, groundY: GROUND_Y,
+      hp: hp, maxHp: hp,
+      speed: beastSpeed(lv) * rnd(0.88, 1.12),
       phase: Math.random() * Math.PI * 2,
-      rear: 0, dying: false, dead: false, flash: 0,
+      rear: 0, dying: false, flash: 0, deathTimer: 0,
       cooldown: rnd(0.8, 3.0),
       mouth: { x: x0 + 38, y: GROUND_Y - 58 },
-      deathTimer: 0
+      /* gait state */
+      gaitTimer: rnd(1.5, 4), gaitActive: 0, gaitTell: 0, hopPhase: Math.random() * 6.28
     };
   }
 
   function startLevel(lv) {
     level = lv;
-    camels = [];
-    var n = camelCount(lv);
-    for (var i = 0; i < n; i++) camels.push(makeCamel(i, n, lv));
+    if (lv > bestZone) bestZone = lv;
+    beasts = [];
+    var n = beastCount(lv);
+    for (var i = 0; i < n; i++) beasts.push(makeBeast(i, n, lv));
     bullets = [];
-    spits = [];
+    shots = [];
     particles = [];
     floaters = [];
     llama = null;
-    camelBonus = 100;
+    killBonus = 100;
     resetPlayer(true);
     state = 'intro';
     stateTime = 0;
@@ -170,6 +198,7 @@
   function resetPlayer(hard) {
     if (!player || hard) {
       player = { x: 40, y: 90, vx: 0, vy: 0, facing: 1, cooldown: 0, invuln: RESPAWN_INVULN };
+      camX = 0;
     } else {
       player.x = clamp(camX + 40, 0, WORLD_W - SHIP_W);
       player.y = 80;
@@ -190,9 +219,120 @@
   }
 
   /* =================================================================
+   * gaits -- how each species covers ground
+   * ================================================================= */
+  function gaitStep(b, sp, dt) {
+    var mul = 1, lift = 0;
+    b.gaitTimer -= dt;
+    switch (sp.gait) {
+      case 'prowl':                       /* cats: creep, then pounce */
+        if (b.gaitActive > 0) {
+          b.gaitActive -= dt;
+          mul = 3.0;
+        } else {
+          mul = 0.75;
+          if (b.gaitTimer <= 0) { b.gaitActive = 0.55; b.gaitTimer = rnd(2.0, 4.0); }
+        }
+        break;
+      case 'trot':                        /* dogs: brisk and bouncy */
+        mul = 1;
+        lift = -Math.abs(Math.sin(b.phase * 1.6)) * 3;
+        break;
+      case 'lumber':                      /* pandas: slow, with pauses */
+        if (b.gaitActive > 0) { b.gaitActive -= dt; mul = 0; }
+        else {
+          mul = 0.95;
+          if (b.gaitTimer <= 0) { b.gaitActive = 0.9; b.gaitTimer = rnd(3.5, 6.0); }
+        }
+        break;
+      case 'charge':                      /* elephants: telegraphed rushes */
+        if (b.gaitActive > 0) { b.gaitActive -= dt; mul = 3.2; b.gaitTell = 0; }
+        else if (b.gaitTimer <= 0.6) {
+          mul = 0.35;
+          b.gaitTell = 1;
+          if (b.gaitTimer <= 0) { b.gaitActive = 1.0; b.gaitTimer = rnd(3.0, 5.0); }
+        } else { mul = 0.6; b.gaitTell = 0; }
+        break;
+      case 'hop':                         /* sheep: bound, land, bound */
+        b.hopPhase += dt * 3.4;
+        var s = Math.sin(b.hopPhase);
+        mul = Math.max(0, s) * 2.2;
+        lift = -Math.max(0, s) * 12;
+        break;
+      default:
+        mul = 1;
+    }
+    b.feetY = b.groundY + lift;
+    return mul;
+  }
+
+  /* =================================================================
+   * weapons -- one per species
+   * ================================================================= */
+  function fireWeapon(b, sp, lv) {
+    var mx = b.mouth.x, my = b.mouth.y;
+    var tx = player.x + SHIP_W / 2, ty = player.y + SHIP_H / 2;
+    var dx = tx - mx, dy = ty - my;
+    var d = Math.hypot(dx, dy) || 1;
+    var v = shotSpeed(lv);
+
+    function shot(o) {
+      o.life = o.life || 5;
+      o.grav = o.grav || 0;
+      o.bounces = o.bounces || 0;
+      o.homing = o.homing || 0;
+      o.spin = Math.random() * 6.28;
+      shots.push(o);
+    }
+
+    switch (sp.weapon) {
+      case 'spit':
+        shot({ kind: 'spit', x: mx, y: my, r: 4,
+               vx: dx / d * v + rnd(-8, 8), vy: dy / d * v + rnd(-8, 8), grav: 22 });
+        Sound.spit();
+        break;
+
+      case 'hairball':                    /* bounces off the ground */
+        shot({ kind: 'hairball', x: mx, y: my, r: 5, bounces: 2,
+               vx: dx / d * v * 0.95, vy: -Math.abs(v) * 0.35, grav: 150 });
+        Sound.spit();
+        break;
+
+      case 'bark':                        /* flat, fast sonic ring */
+        shot({ kind: 'bark', x: mx, y: my, r: 7, life: 3.2,
+               vx: (dx < 0 ? -1 : 1) * v * 1.9, vy: dy / d * v * 0.25, grav: 0 });
+        Sound.bark();
+        break;
+
+      case 'bamboo':                      /* high lob that shatters */
+        shot({ kind: 'bamboo', x: mx, y: my, r: 5, shatter: true,
+               vx: dx / d * v * 0.8, vy: -Math.abs(v) * 0.8, grav: 95 });
+        Sound.spit();
+        break;
+
+      case 'spray':                       /* a fan of three */
+        for (var k = -1; k <= 1; k++) {
+          var a = Math.atan2(dy, dx) + k * 0.22;
+          shot({ kind: 'spray', x: mx, y: my, r: 3,
+                 vx: Math.cos(a) * v * 1.05, vy: Math.sin(a) * v * 1.05, grav: 45 });
+        }
+        Sound.spray();
+        break;
+
+      case 'bolt':                        /* fast, briefly seeking */
+        shot({ kind: 'bolt', x: mx, y: my, r: 3, life: 3.4, homing: 0.7,
+               vx: dx / d * v * 1.55, vy: dy / d * v * 1.55, grav: 0 });
+        Sound.bolt();
+        break;
+    }
+  }
+
+  /* =================================================================
    * update -- ground assault
    * ================================================================= */
   function updatePlay(dt) {
+    var sp = speciesFor(level);
+
     /* --- player --- */
     var ax = 0, ay = 0;
     if (keys.left) ax -= 1;
@@ -207,63 +347,57 @@
     if (!ay) player.vy -= player.vy * Math.min(1, FRICTION * dt);
     player.vx = clamp(player.vx, -MAX_VX, MAX_VX);
     player.vy = clamp(player.vy, -MAX_VY, MAX_VY);
-
     player.x = clamp(player.x + player.vx * dt, 0, WORLD_W - SHIP_W);
     player.y = clamp(player.y + player.vy * dt, FLY_TOP, FLY_BOTTOM);
     if (player.y === FLY_TOP || player.y === FLY_BOTTOM) player.vy = 0;
-
     if (player.invuln > 0) player.invuln -= dt;
 
-    /* --- camera --- */
     camX = clamp(player.x + SHIP_W / 2 - VW / 2, 0, WORLD_W - VW);
 
     /* --- firing --- */
     player.cooldown -= dt;
     if (keys.fire && player.cooldown <= 0 && bullets.length < MAX_BULLETS) {
-      player.cooldown = FIRE_COOLDOWN;
+      player.cooldown = fireCooldown();
       bullets.push({
         x: player.x + (player.facing > 0 ? SHIP_W : 0),
-        y: player.y + 4,
-        vx: BULLET_SPEED * player.facing,
-        life: 1.6
+        y: player.y + 4, vx: BULLET_SPEED * player.facing, life: 1.6
       });
       Sound.shoot();
     }
 
     /* --- bullets --- */
     for (var i = bullets.length - 1; i >= 0; i--) {
-      var b = bullets[i];
-      b.x += b.vx * dt;
-      b.life -= dt;
-      if (b.life <= 0 || b.x < camX - 20 || b.x > camX + VW + 20) {
+      var bl = bullets[i];
+      bl.x += bl.vx * dt;
+      bl.life -= dt;
+      if (bl.life <= 0 || bl.x < camX - 20 || bl.x > camX + VW + 20) {
         bullets.splice(i, 1);
         continue;
       }
       var consumed = false;
-      for (var j = 0; j < camels.length && !consumed; j++) {
-        var cm = camels[j];
-        if (cm.dead || cm.dying) continue;
-        var zone = Art.camelHit(cm, b.x, b.y);
+      for (var j = 0; j < beasts.length && !consumed; j++) {
+        var bt = beasts[j];
+        if (bt.dying) continue;
+        var zone = Beasts.beastHit(bt, sp, bl.x, bl.y);
         if (!zone) continue;
         consumed = true;
         bullets.splice(i, 1);
-        var dmg = zone === 'hump' ? 2 : zone === 'neck' ? 1 : 1;
-        cm.hp -= dmg;
-        cm.flash = 0.06;
-        addScore(dmg);           /* one point per hit, as per 1983 */
-        if (zone === 'hump') {
+        var dmg = bulletDamage() * (zone === 'weak' ? 2 : 1);
+        bt.hp -= dmg;
+        bt.flash = 0.06;
+        addScore(dmg);                    /* one point per point of damage */
+        if (zone === 'weak') {
           Sound.weakSpot();
-          burst(b.x, b.y, 4, 60, [C.white, C.lightgreen, C.cyan], 2, 0.35);
+          burst(bl.x, bl.y, 4, 60, [C.white, sp.accent, C.cyan], 2, 0.35);
         } else {
           Sound.hit();
-          burst(b.x, b.y, 2, 45, [C.yellow, C.white], 1, 0.25);
+          burst(bl.x, bl.y, 2, 45, [C.yellow, C.white], 1, 0.25);
         }
-        if (cm.hp <= 0) destabilise(cm);
+        if (bt.hp <= 0) destabilise(bt, sp);
       }
-      /* the bonus llama is worth stopping for */
       if (!consumed && llama && !llama.dead &&
-          b.x > llama.x && b.x < llama.x + 18 &&
-          b.y > llama.feetY - 22 && b.y < llama.feetY) {
+          bl.x > llama.x && bl.x < llama.x + 18 &&
+          bl.y > llama.feetY - 22 && bl.y < llama.feetY) {
         bullets.splice(i, 1);
         llama.dead = true;
         addScore(500);
@@ -274,85 +408,55 @@
       }
     }
 
-    /* --- camels --- */
+    /* --- beasts --- */
     var alive = 0;
-    for (var k = camels.length - 1; k >= 0; k--) {
-      var c = camels[k];
-      if (c.flash > 0) c.flash -= dt;
+    for (var k = beasts.length - 1; k >= 0; k--) {
+      var b = beasts[k];
+      if (b.flash > 0) b.flash -= dt;
 
-      if (c.dying) {
-        c.deathTimer -= dt;
-        c.rear = Math.min(1, c.rear + dt * 2.2);
-        c.phase += dt * 2;
+      if (b.dying) {
+        b.deathTimer -= dt;
+        b.rear = Math.min(1, b.rear + dt * 2.2);
+        b.phase += dt * 2;
         if (Math.random() < dt * 22) {
-          burst(c.x + rnd(-26, 26), c.feetY - rnd(6, 44), 3, 70, CYCLE, 2, 0.7);
+          burst(b.x + rnd(-32, 32), b.feetY - rnd(6, 60), 3, 70, CYCLE, 2, 0.7);
         }
-        if (c.deathTimer <= 0) {
-          burst(c.x, c.feetY - 24, 60, 190, CYCLE, 3, 1.3);
+        if (b.deathTimer <= 0) {
+          burst(b.x, b.feetY - 30, 60, 190, CYCLE, 3, 1.3);
           shake = Math.max(shake, 7);
           flash = 0.09; flashCol = C.white;
-          camels.splice(k, 1);
+          beasts.splice(k, 1);
         }
         continue;
       }
 
       alive++;
-      c.x += c.speed * dt;
-      c.phase += dt * (1.4 + c.speed * 0.06);
+      var mul = gaitStep(b, sp, dt);
+      b.x += b.speed * mul * dt;
+      b.phase += dt * (1.4 + b.speed * mul * 0.06);
 
-      /* reached the home base -- that costs you a ship */
-      if (c.x + Art.CAMEL_W * 0.6 > BASE_X) {
-        camels.splice(k, 1);
+      if (b.x + Beasts.W * 0.6 > BASE_X) {
+        beasts.splice(k, 1);
         breachBase();
         continue;
       }
 
-      /* spit fireballs when the player is in range */
-      c.cooldown -= dt;
-      var near = Math.abs((player.x + 8) - c.x) < 200;
-      if (near && c.cooldown <= 0 && !c.dying) {
-        c.cooldown = rnd(1.0, 2.4) / (1 + (level - 1) * 0.05);
-        var mx = c.mouth.x, my = c.mouth.y;
-        var dx = (player.x + SHIP_W / 2) - mx, dy = (player.y + SHIP_H / 2) - my;
-        var d = Math.hypot(dx, dy) || 1;
-        var sp = spitSpeed(level);
-        spits.push({
-          x: mx, y: my,
-          vx: dx / d * sp + rnd(-8, 8),
-          vy: dy / d * sp + rnd(-8, 8),
-          life: 5, r: 3
-        });
-        Sound.spit();
+      b.cooldown -= dt;
+      if (Math.abs((player.x + 8) - b.x) < 210 && b.cooldown <= 0) {
+        var range = sp.fireEvery;
+        b.cooldown = rnd(range[0], range[1]) / (1 + (level - 1) * 0.012);
+        fireWeapon(b, sp, level);
       }
 
-      /* ramming a camel is fatal for the small aircraft */
       if (player.invuln <= 0 &&
-          Art.camelHit(c, player.x + SHIP_W / 2, player.y + SHIP_H / 2)) {
+          Beasts.beastHit(b, sp, player.x + SHIP_W / 2, player.y + SHIP_H / 2)) {
         killPlayer();
       }
     }
 
-    /* --- spits --- */
-    for (var s = spits.length - 1; s >= 0; s--) {
-      var sp2 = spits[s];
-      sp2.x += sp2.vx * dt;
-      sp2.y += sp2.vy * dt;
-      sp2.vy += 22 * dt;
-      sp2.life -= dt;
-      if (sp2.life <= 0 || sp2.y > GROUND_Y || sp2.x < camX - 40 || sp2.x > camX + VW + 40) {
-        if (sp2.y >= GROUND_Y) burst(sp2.x, GROUND_Y, 6, 50, [C.orange, C.yellow], 1, 0.4);
-        spits.splice(s, 1);
-        continue;
-      }
-      if (player.invuln <= 0 &&
-          sp2.x > player.x + 2 && sp2.x < player.x + SHIP_W - 2 &&
-          sp2.y > player.y + 1 && sp2.y < player.y + SHIP_H - 1) {
-        spits.splice(s, 1);
-        killPlayer();
-      }
-    }
+    updateShots(dt);
 
-    /* --- bonus llama --- */
+    /* --- bonus llama, the constant in a changing bestiary --- */
     if (!llama && Math.random() < dt * 0.06) {
       var fromLeft = Math.random() < 0.5;
       llama = {
@@ -368,8 +472,7 @@
       if (llama.dead || llama.x < camX - 80 || llama.x > camX + VW + 80) llama = null;
     }
 
-    /* --- level cleared? --- */
-    if (alive === 0 && camels.length === 0) {
+    if (alive === 0 && beasts.length === 0) {
       state = 'warp';
       stateTime = 0;
       Sound.warp();
@@ -377,14 +480,67 @@
     }
   }
 
-  function destabilise(c) {
-    c.dying = true;
-    c.deathTimer = 0.85;
-    c.hp = 0;
-    addScore(camelBonus);
-    floater(c.x - 16, c.feetY - 60, String(camelBonus), C.lightgreen, 1.6);
-    camelBonus *= 2;
-    Sound.camelDeath();
+  function updateShots(dt) {
+    for (var s = shots.length - 1; s >= 0; s--) {
+      var o = shots[s];
+      if (o.homing > 0) {
+        o.homing -= dt;
+        var hx = (player.x + SHIP_W / 2) - o.x, hy = (player.y + SHIP_H / 2) - o.y;
+        var hd = Math.hypot(hx, hy) || 1;
+        var spd = Math.hypot(o.vx, o.vy);
+        o.vx += (hx / hd * spd - o.vx) * Math.min(1, dt * 2.4);
+        o.vy += (hy / hd * spd - o.vy) * Math.min(1, dt * 2.4);
+      }
+      o.x += o.vx * dt;
+      o.y += o.vy * dt;
+      o.vy += o.grav * dt;
+      o.spin += dt * 9;
+      o.life -= dt;
+
+      if (o.y >= GROUND_Y && o.kind !== 'bark') {
+        if (o.bounces > 0) {
+          o.bounces--;
+          o.y = GROUND_Y - 1;
+          o.vy = -Math.abs(o.vy) * 0.66;
+          o.vx *= 0.9;
+          burst(o.x, GROUND_Y, 4, 45, [C.grey, C.white], 1, 0.3);
+        } else {
+          if (o.shatter) {
+            for (var f = 0; f < 3; f++) {
+              shots.push({ kind: 'shard', x: o.x, y: GROUND_Y - 3, r: 2,
+                           vx: rnd(-70, 70), vy: rnd(-90, -40), grav: 140,
+                           life: 1.4, bounces: 0, homing: 0, spin: 0 });
+            }
+            Sound.hit();
+          }
+          burst(o.x, GROUND_Y, 6, 50, [C.orange, C.yellow], 1, 0.4);
+          shots.splice(s, 1);
+          continue;
+        }
+      }
+
+      if (o.life <= 0 || o.x < camX - 60 || o.x > camX + VW + 60) {
+        shots.splice(s, 1);
+        continue;
+      }
+
+      if (player.invuln <= 0 &&
+          o.x + o.r > player.x + 2 && o.x - o.r < player.x + SHIP_W - 2 &&
+          o.y + o.r > player.y + 1 && o.y - o.r < player.y + SHIP_H - 1) {
+        shots.splice(s, 1);
+        killPlayer();
+      }
+    }
+  }
+
+  function destabilise(b, sp) {
+    b.dying = true;
+    b.deathTimer = 0.85;
+    b.hp = 0;
+    addScore(killBonus);
+    floater(b.x - 16, b.feetY - 76, String(killBonus), C.lightgreen, 1.6);
+    killBonus *= 2;
+    Sound.beastDeath();
     shake = Math.max(shake, 4);
   }
 
@@ -403,10 +559,7 @@
     shake = 8;
     flash = 0.1; flashCol = C.lightred;
     loseLife();
-    if (lives > 0) {
-      state = 'dying';
-      stateTime = 0;
-    }
+    if (lives > 0) { state = 'dying'; stateTime = 0; }
   }
 
   function loseLife() {
@@ -416,7 +569,7 @@
       state = 'over';
       stateTime = 0;
       Sound.stopMusic();
-      saveHi();
+      save();
     }
   }
 
@@ -426,7 +579,8 @@
   function startHyper() {
     state = 'hyper';
     stateTime = 0;
-    hyperLength = Math.min(20, 11 + level * 0.6);
+    /* the run before a species shift goes on longer and gets uglier */
+    hyperLength = Math.min(22, 11 + level * 0.25) + (isActFinale(level) ? 6 : 0);
     hyperTimer = hyperLength;
     missiles = [];
     warpLines = [];
@@ -467,32 +621,31 @@
       if (w.x < -30) { w.x = VW + rnd(0, 40); w.y = rnd(HUD_H + 4, SCAN_Y - 4); }
     }
 
-    /* missile waves get denser and faster with the level */
-    var rate = 1.6 + level * 0.22;
+    var rate = 1.6 + level * 0.06 + actIndex(level) * 0.5;
     if (Math.random() < dt * rate) {
       var fromRight = Math.random() < 0.82;
-      var speed = (170 + level * 9) * rnd(0.85, 1.25);
-      missiles.push({
+      var speed = (170 + level * 2.5 + actIndex(level) * 20) * rnd(0.85, 1.25);
+      var m = {
         x: fromRight ? VW + 8 : -18,
         y: rnd(HUD_H + 8, SCAN_Y - 12),
         vx: fromRight ? -speed : speed,
         wave: Math.random() < 0.35 ? rnd(20, 55) : 0,
-        phase: Math.random() * 6.28,
-        y0: 0
-      });
-      missiles[missiles.length - 1].y0 = missiles[missiles.length - 1].y;
+        phase: Math.random() * 6.28, y0: 0
+      };
+      m.y0 = m.y;
+      missiles.push(m);
     }
 
-    for (var m = missiles.length - 1; m >= 0; m--) {
-      var mi = missiles[m];
-      mi.x += mi.vx * dt;
-      mi.phase += dt * 5;
-      mi.y = mi.y0 + Math.sin(mi.phase) * mi.wave;
-      if (mi.x < -40 || mi.x > VW + 40) { missiles.splice(m, 1); continue; }
+    for (var mi = missiles.length - 1; mi >= 0; mi--) {
+      var ms = missiles[mi];
+      ms.x += ms.vx * dt;
+      ms.phase += dt * 5;
+      ms.y = ms.y0 + Math.sin(ms.phase) * ms.wave;
+      if (ms.x < -40 || ms.x > VW + 40) { missiles.splice(mi, 1); continue; }
       if (player.invuln <= 0 &&
-          mi.x + 10 > player.x + 2 && mi.x < player.x + SHIP_W - 2 &&
-          mi.y + 3 > player.y + 1 && mi.y < player.y + SHIP_H - 1) {
-        missiles.splice(m, 1);
+          ms.x + 10 > player.x + 2 && ms.x < player.x + SHIP_W - 2 &&
+          ms.y + 3 > player.y + 1 && ms.y < player.y + SHIP_H - 1) {
+        missiles.splice(mi, 1);
         burst(player.x + 8, player.y + 4, 40, 150, [C.white, C.cyan, C.lightblue], 2, 1.0);
         Sound.playerDeath();
         shake = 8; flash = 0.1; flashCol = C.cyan;
@@ -502,8 +655,7 @@
     }
 
     if (hyperTimer <= 0 && state === 'hyper') {
-      var bonus = 1000 * level;
-      addScore(bonus);
+      addScore(1000 * level);
       Sound.bonus();
       state = 'hyperclear';
       stateTime = 0;
@@ -511,14 +663,12 @@
   }
 
   /* =================================================================
-   * shared particle / floater update
+   * shared fx
    * ================================================================= */
   function updateFx(dt) {
     for (var i = particles.length - 1; i >= 0; i--) {
       var p = particles[i];
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.vy += p.grav * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.grav * dt;
       p.life -= dt;
       if (p.life <= 0) particles.splice(i, 1);
     }
@@ -539,6 +689,27 @@
   /* =================================================================
    * top-level update
    * ================================================================= */
+  function advanceZone() {
+    if (level >= MAX_LEVEL) {
+      won = true;
+      state = 'over';
+      stateTime = 0;
+      save();
+      return;
+    }
+    if (isActFinale(level)) {
+      /* the surprise: a whole new species takes the field */
+      revealSp = speciesFor(level + 1);
+      state = 'reveal';
+      stateTime = 0;
+      Sound.stopMusic();
+      Sound.alarm();
+      return;
+    }
+    startLevel(level + 1);
+    Sound.playMusic('game');
+  }
+
   function update(dt) {
     t += dt;
     stateTime += dt;
@@ -550,7 +721,7 @@
 
     if (state === 'title') {
       Sound.playMusic('title');
-      if (tapped('start') || tapped('fire')) { newGame(); }
+      if (tapped('start') || tapped('fire')) newGame();
       updateFx(dt);
       return;
     }
@@ -574,7 +745,7 @@
     switch (state) {
       case 'intro':
         updateFx(dt);
-        if (stateTime > 2.2) { state = 'play'; stateTime = 0; }
+        if (stateTime > 2.4) { state = 'play'; stateTime = 0; }
         break;
       case 'play':
         updatePlay(dt);
@@ -582,11 +753,7 @@
         break;
       case 'dying':
         updateFx(dt);
-        if (stateTime > 1.6) {
-          resetPlayer(false);
-          state = 'play';
-          stateTime = 0;
-        }
+        if (stateTime > 1.6) { resetPlayer(false); state = 'play'; stateTime = 0; }
         break;
       case 'warp':
         updateFx(dt);
@@ -598,16 +765,19 @@
         break;
       case 'hyperclear':
         updateFx(dt);
-        if (stateTime > 2.0) {
-          if (level >= MAX_LEVEL) {
-            won = true;
-            state = 'over';
-            stateTime = 0;
-            saveHi();
-          } else {
-            startLevel(level + 1);
-            Sound.playMusic('game');
-          }
+        if (stateTime > 2.0) advanceZone();
+        break;
+      case 'reveal':
+        updateFx(dt);
+        if (stateTime > 2.15 && stateTime - dt <= 2.15) Sound.revealRumble();
+        if (stateTime > 4.75 && stateTime - dt <= 4.75) {
+          Sound.revealHit();
+          flash = 0.16; flashCol = C.white;
+          shake = 9;
+        }
+        if (stateTime > 8.6) {
+          startLevel(level + 1);
+          Sound.playMusic('game');
         }
         break;
     }
@@ -616,22 +786,17 @@
   /* =================================================================
    * rendering
    * ================================================================= */
-  function skyColor() {
-    var tints = [C.black, '#0a0020', '#001018', '#100010', '#001500'];
-    return tints[(level - 1) % tints.length];
-  }
-
   function drawHud() {
     Art.rect(ctx, 0, 0, VW, HUD_H, C.black);
     Art.rect(ctx, 0, HUD_H, VW, 1, C.darkgrey);
     Font.draw(ctx, 'SC ' + pad(score, 6), 3, 3, C.lightgreen, 1);
     Font.draw(ctx, 'HI ' + pad(hiScore, 6), 108, 3, C.yellow, 1);
-    Font.draw(ctx, 'ZONE ' + pad(level, 2), 212, 3, C.cyan, 1);
+    Font.draw(ctx, 'ZONE ' + pad(zoneInAct(level), 2), 212, 3, C.cyan, 1);
     for (var i = 0; i < Math.min(lives, 5); i++) {
       Art.rect(ctx, 268 + i * 10, 4, 7, 2, C.lightgrey);
       Art.rect(ctx, 270 + i * 10, 3, 3, 1, C.cyan);
     }
-    if (lives > 5) Font.draw(ctx, '+' + (lives - 5), 268 + 50, 3, C.lightgrey, 1);
+    if (lives > 5) Font.draw(ctx, '+' + (lives - 5), 318 - 12, 3, C.lightgrey, 1);
   }
 
   function drawScanner() {
@@ -640,97 +805,137 @@
     var y = SCAN_Y + 7;
     var TRACK_X = 40, TRACK_W = VW - TRACK_X - 6;
     Art.rect(ctx, TRACK_X, y, TRACK_W, 1, C.darkgrey);
-    var sx = function (wx) {
-      return TRACK_X + clamp(wx / WORLD_W, 0, 1) * TRACK_W;
-    };
+    var sx = function (wx) { return TRACK_X + clamp(wx / WORLD_W, 0, 1) * TRACK_W; };
 
-    /* base marker */
     Art.rect(ctx, sx(BASE_X), y - 5, 3, 10, C.lightgreen);
-    /* viewport bracket */
     Art.rect(ctx, sx(camX), y - 4, 1, 8, C.grey);
     Art.rect(ctx, sx(camX + VW), y - 4, 1, 8, C.grey);
-    /* camels */
-    for (var i = 0; i < camels.length; i++) {
-      var c = camels[i];
-      var hpF = Math.max(0, c.hp / c.maxHp);
-      var col = c.dying ? C.white : Art.DAMAGE[Math.min(Art.DAMAGE.length - 1,
+    for (var i = 0; i < beasts.length; i++) {
+      var b = beasts[i];
+      var hpF = Math.max(0, b.hp / b.maxHp);
+      var col = b.dying ? C.white : Art.DAMAGE[Math.min(Art.DAMAGE.length - 1,
         Math.floor((1 - hpF) * Art.DAMAGE.length))];
-      Art.rect(ctx, sx(c.x) - 1, y - 3, 3, 6, col);
+      Art.rect(ctx, sx(b.x) - 1, y - 3, 3, 6, col);
     }
-    /* player */
     if (player) Art.rect(ctx, sx(player.x) - 1, y - 2, 3, 4, C.white);
     Font.draw(ctx, 'SCAN', 6, SCAN_Y + 4, C.grey, 1);
   }
 
-  function drawFx() {
-    for (var i = 0; i < particles.length; i++) {
-      var p = particles[i];
-      var s = p.life / p.max > 0.4 ? p.size : Math.max(1, p.size - 1);
-      Art.rect(ctx, p.x - camXOffset(), p.y, s, s, p.col);
-    }
-    for (var f = 0; f < floaters.length; f++) {
-      var fl = floaters[f];
-      if (Math.floor(fl.life * 20) % 2 === 0 || fl.life > 0.4) {
-        Font.draw(ctx, fl.text, fl.x - camXOffset(), fl.y, fl.col, 1);
-      }
-    }
-  }
-
-  /* Particles are stored in world space during the ground assault and
-     in screen space during hyperspace. */
+  /* Particles live in world space on the ground, screen space in warp. */
   function camXOffset() {
     return (state === 'hyper' || state === 'hyperclear') ? 0 : camX;
   }
 
+  function drawFx() {
+    var off = camXOffset();
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var s = p.life / p.max > 0.4 ? p.size : Math.max(1, p.size - 1);
+      Art.rect(ctx, p.x - off, p.y, s, s, p.col);
+    }
+    for (var f = 0; f < floaters.length; f++) {
+      var fl = floaters[f];
+      if (Math.floor(fl.life * 20) % 2 === 0 || fl.life > 0.4) {
+        Font.draw(ctx, fl.text, fl.x - off, fl.y, fl.col, 1);
+      }
+    }
+  }
+
+  function drawShot(o) {
+    var x = o.x - camX, y = o.y;
+    var col = CYCLE[(Math.floor(t * 22) + Math.floor(o.spin)) % CYCLE.length];
+    switch (o.kind) {
+      case 'spit':
+        Art.rect(ctx, x - 4, y - 3, 8, 6, C.black);
+        Art.rect(ctx, x - 3, y - 4, 6, 8, C.black);
+        Art.rect(ctx, x - 3, y - 2, 6, 4, col);
+        Art.rect(ctx, x - 2, y - 3, 4, 6, col);
+        Art.rect(ctx, x - 1, y - 1, 2, 2, C.white);
+        break;
+      case 'hairball':
+        Art.rect(ctx, x - 5, y - 5, 10, 10, C.black);
+        Art.rect(ctx, x - 4, y - 4, 8, 8, C.grey);
+        Art.rect(ctx, x - 3, y - 3, 6, 6, C.lightgrey);
+        /* stray tufts */
+        Art.rect(ctx, x - 6 + (Math.floor(o.spin) % 3), y - 1, 2, 1, C.grey);
+        Art.rect(ctx, x + 4, y - 3 + (Math.floor(o.spin * 1.7) % 4), 2, 1, C.grey);
+        break;
+      case 'bark':
+        for (var r = 0; r < 3; r++) {
+          var h = 12 - r * 3;
+          var bx = x + (o.vx > 0 ? -r * 4 : r * 4);
+          Art.rect(ctx, bx - 1, y - h / 2 - 1, 4, h + 2, C.black);
+          Art.rect(ctx, bx, y - h / 2, 2, h, r === 0 ? C.white : col);
+        }
+        break;
+      case 'bamboo':
+        var vert = Math.sin(o.spin) > 0;
+        var w = vert ? 4 : 14, hh = vert ? 14 : 4;
+        Art.rect(ctx, x - w / 2 - 1, y - hh / 2 - 1, w + 2, hh + 2, C.black);
+        Art.rect(ctx, x - w / 2, y - hh / 2, w, hh, C.green);
+        Art.rect(ctx, x - w / 2, y - hh / 2 + (vert ? 5 : 0), vert ? w : 2, vert ? 1 : hh, C.lightgreen);
+        break;
+      case 'spray':
+        Art.rect(ctx, x - 3, y - 3, 6, 6, C.black);
+        Art.rect(ctx, x - 2, y - 2, 4, 4, C.cyan);
+        Art.rect(ctx, x - 1, y - 1, 2, 2, C.white);
+        break;
+      case 'bolt':
+        Art.rect(ctx, x - 4, y - 4, 8, 8, C.black);
+        Art.rect(ctx, x - 3, y - 1, 3, 2, C.white);
+        Art.rect(ctx, x, y - 3, 2, 3, C.yellow);
+        Art.rect(ctx, x, y + 1, 3, 2, C.white);
+        Art.rect(ctx, x - 1, y - 1, 2, 2, col);
+        break;
+      case 'shard':
+        Art.rect(ctx, x - 2, y - 2, 4, 4, C.black);
+        Art.rect(ctx, x - 1, y - 1, 3, 3, C.lightgreen);
+        break;
+    }
+  }
+
   function drawPlay() {
-    Art.rect(ctx, 0, 0, VW, VH, skyColor());
+    var sp = speciesFor(level);
+    Art.rect(ctx, 0, 0, VW, VH, sp.biome.sky);
     Art.drawStars(ctx, stars, camX, t);
-    Art.drawTerrain(ctx, camX, GROUND_Y, level, t);
+    Art.drawTerrain(ctx, camX, GROUND_Y, level, t, sp.biome);
 
     if (BASE_X - camX < VW + 60) Art.drawBase(ctx, BASE_X - camX, GROUND_Y, t);
-
     if (llama) Art.drawLlama(ctx, llama.x - camX, llama.feetY, llama.phase, t);
 
-    for (var i = 0; i < camels.length; i++) {
-      var c = camels[i];
-      var screenX = c.x - camX;
-      if (screenX < -Art.CAMEL_W || screenX > VW + Art.CAMEL_W) {
-        /* still needs a mouth position for off-screen aiming maths */
-        c.mouth.x = c.x + 26;
-        c.mouth.y = c.feetY - 40;
+    for (var i = 0; i < beasts.length; i++) {
+      var b = beasts[i];
+      var screenX = b.x - camX;
+      if (screenX < -Beasts.W - 20 || screenX > VW + Beasts.W + 20) {
+        b.mouth.x = b.x + 40;
+        b.mouth.y = b.feetY - 50;
         continue;
       }
-      var shim = { x: screenX, feetY: c.feetY, hp: c.hp, maxHp: c.maxHp,
-                   phase: c.phase, rear: c.rear, dying: c.dying, flash: c.flash,
-                   mouth: { x: 0, y: 0 } };
-      Art.drawCamel(ctx, shim, t);
-      c.mouth.x = shim.mouth.x + camX;
-      c.mouth.y = shim.mouth.y;
-      /* health pip above wounded camels */
-      if (!c.dying && c.hp < c.maxHp) {
+      var shim = {
+        x: screenX, feetY: b.feetY, hp: b.hp, maxHp: b.maxHp,
+        phase: b.phase, rear: b.rear, dying: b.dying, flash: b.flash,
+        mouth: { x: 0, y: 0 }
+      };
+      Beasts.drawBeast(ctx, shim, t, sp);
+      b.mouth.x = shim.mouth.x + camX;
+      b.mouth.y = shim.mouth.y;
+
+      /* charge telegraph */
+      if (b.gaitTell && Math.floor(t * 14) % 2 === 0) {
+        Art.rect(ctx, screenX - 20, b.feetY - Beasts.H - 14, 40, 3, C.lightred);
+      }
+      if (!b.dying && b.hp < b.maxHp) {
         var w = 34;
-        Art.rect(ctx, screenX - w / 2, c.feetY - Art.CAMEL_H - 8, w, 2, C.darkgrey);
-        Art.rect(ctx, screenX - w / 2, c.feetY - Art.CAMEL_H - 8,
-                 w * (c.hp / c.maxHp), 2, C.lightred);
+        Art.rect(ctx, screenX - w / 2, b.feetY - Beasts.H - 8, w, 2, C.darkgrey);
+        Art.rect(ctx, screenX - w / 2, b.feetY - Beasts.H - 8, w * (b.hp / b.maxHp), 2, C.lightred);
       }
     }
 
-    for (var b = 0; b < bullets.length; b++) {
-      var bl = bullets[b];
-      Art.rect(ctx, bl.x - camX, bl.y, 4, 2, TRACER[(Math.floor(t * 40) + b) % TRACER.length]);
+    for (var bi = 0; bi < bullets.length; bi++) {
+      var bul = bullets[bi];
+      Art.rect(ctx, bul.x - camX, bul.y, 4, 2, TRACER[(Math.floor(t * 40) + bi) % TRACER.length]);
     }
-
-    for (var s = 0; s < spits.length; s++) {
-      var sp = spits[s];
-      var col = CYCLE[(Math.floor(t * 22) + s) % CYCLE.length];
-      var sxp = sp.x - camX;
-      /* keyline first so the fireball survives a busy ridge behind it */
-      Art.rect(ctx, sxp - 4, sp.y - 3, 8, 6, C.black);
-      Art.rect(ctx, sxp - 3, sp.y - 4, 6, 8, C.black);
-      Art.rect(ctx, sxp - 3, sp.y - 2, 6, 4, col);
-      Art.rect(ctx, sxp - 2, sp.y - 3, 4, 6, col);
-      Art.rect(ctx, sxp - 1, sp.y - 1, 2, 2, C.white);
-    }
+    for (var s = 0; s < shots.length; s++) drawShot(shots[s]);
 
     drawFx();
 
@@ -745,36 +950,28 @@
 
   function drawHyper() {
     Art.rect(ctx, 0, 0, VW, VH, C.black);
-
-    /* Backdrop: dim streaks only. Nothing back here is allowed to
-       compete with a missile for the player's attention. */
     var DIM = [C.darkgrey, C.blue, C.grey, C.purple];
     for (var i = 0; i < warpLines.length; i++) {
       var w = warpLines[i];
       Art.rect(ctx, w.x, w.y, w.len, 1, DIM[i % DIM.length]);
     }
-    /* three slow psychedelic horizon bands, kept faint */
     for (var b = 0; b < 3; b++) {
       var y = 46 + b * 46 + Math.sin(t * 1.6 + b * 2) * 9;
       ctx.globalAlpha = 0.35;
       Art.rect(ctx, 0, y, VW, 1, CYCLE[(b + Math.floor(t * 4)) % CYCLE.length]);
       ctx.globalAlpha = 1;
     }
-
-    /* Missiles: black keyline, white body, hot nose, cycling exhaust. */
     for (var m = 0; m < missiles.length; m++) {
       var mi = missiles[m];
       var dir = mi.vx > 0 ? 1 : -1;
       var nose = dir > 0 ? mi.x + 12 : mi.x - 3;
       var tail = dir > 0 ? mi.x - 8 : mi.x + 12;
-      Art.rect(ctx, tail, mi.y + 1, 8, 2,
-               TRACER[(m + Math.floor(t * 30)) % TRACER.length]);
+      Art.rect(ctx, tail, mi.y + 1, 8, 2, TRACER[(m + Math.floor(t * 30)) % TRACER.length]);
       Art.rect(ctx, mi.x - 1, mi.y - 1, 14, 6, C.black);
       Art.rect(ctx, mi.x, mi.y, 12, 4, C.white);
       Art.rect(ctx, mi.x + (dir > 0 ? 8 : 0), mi.y, 4, 4, C.lightred);
       Art.rect(ctx, nose, mi.y + 1, 3, 2, C.red);
     }
-
     drawFx();
     if (player) {
       var blink = player.invuln > 0 && Math.floor(t * 20) % 2 === 0;
@@ -782,7 +979,6 @@
     }
     drawHud();
 
-    /* survival timer */
     var frac = clamp(hyperTimer / hyperLength, 0, 1);
     Art.rect(ctx, 0, SCAN_Y - 1, VW, SCAN_H + 1, C.black);
     Font.center(ctx, 'HYPERSPACE  ' + Math.ceil(Math.max(0, hyperTimer)),
@@ -791,51 +987,112 @@
     Art.rect(ctx, 4, SCAN_Y + 9, (VW - 8) * frac, 4, C.cyan);
   }
 
+  /* ---- the species-shift reveal ------------------------------------
+   * Three beats: the signal breaks up, a silhouette comes out of the
+   * dark, then the thing lights up and tells you what it is.
+   */
+  function drawReveal() {
+    var s = stateTime;
+    Art.rect(ctx, 0, 0, VW, VH, C.black);
+
+    /* beat one: interference */
+    if (s < 2.6) {
+      var n = Math.floor(clamp(2.6 - s, 0, 2.6) * 12);
+      for (var i = 0; i < n; i++) {
+        Art.rect(ctx, 0, Math.random() * VH, VW, 1 + Math.random() * 3,
+                 [C.darkgrey, C.grey, C.lightgrey, C.white][(Math.random() * 4) | 0]);
+      }
+    }
+    if (s < 2.4) {
+      if (Math.floor(s * 5) % 2 === 0) {
+        Font.center(ctx, 'WARNING', VW / 2, 62, C.lightred, 3);
+      }
+      Font.center(ctx, 'BIOSIGN SHIFT DETECTED', VW / 2, 96, C.white, 1);
+      Font.center(ctx, 'THE HERD IS NOT THE HERD', VW / 2, 110, C.grey, 1);
+      return;
+    }
+
+    /* beat two and three: the shape */
+    var lit = s > 4.75;
+    var dark = clamp((s - 2.4) / 2.35, 0, 1);
+    var shades = ['#0d0d0d', '#1a1a1a', C.darkgrey, C.grey];
+    var mock = {
+      x: VW / 2, feetY: 166, hp: 1, maxHp: 1,
+      phase: t * 3, rear: 0, dying: false, flash: 0, mouth: { x: 0, y: 0 },
+      silhouette: lit ? null : shades[Math.min(shades.length - 1, Math.floor(dark * shades.length))]
+    };
+    Beasts.drawBeast(ctx, mock, t, revealSp, 5);
+
+    /* a scan sweep crawling down the silhouette */
+    if (!lit) {
+      var sy = 40 + ((s - 2.4) * 60) % 150;
+      Art.rect(ctx, 0, sy, VW, 1, C.cyan);
+    }
+
+    if (lit) {
+      var c1 = CYCLE[Math.floor(t * 10) % CYCLE.length];
+      Font.centerShadow(ctx, revealSp.name, VW / 2, 20, c1, C.black, 2);
+      Font.center(ctx, revealSp.reveal, VW / 2, 40, C.white, 1);
+      if (s > 5.9) {
+        Font.center(ctx, 'AIM FOR ' + revealSp.weakName, VW / 2, 174, revealSp.accent, 1);
+      }
+      if (s > 6.8 && Math.floor(t * 4) % 2 === 0) {
+        Font.center(ctx, 'ANTIMAT CANNON  TIER ' + weaponTier(level + 1),
+                    VW / 2, 188, C.lightgreen, 1);
+      }
+    } else {
+      Font.center(ctx, 'INBOUND', VW / 2, 20, C.grey, 1);
+    }
+  }
+
   function drawTitle() {
     Art.rect(ctx, 0, 0, VW, VH, C.black);
     Art.drawStars(ctx, stars, t * 22, t);
-    Art.drawTerrain(ctx, t * 18, GROUND_Y, 1, t);
+    Art.drawTerrain(ctx, t * 18, GROUND_Y, 1, t, SPECIES[0].biome);
 
-    /* an attract-mode camel plods across the bottom */
+    /* attract mode: one camel plods past, and only ever a camel --
+       the rest of the bestiary is a surprise the player earns */
     var demo = {
-      x: ((t * 26) % (VW + 140)) - 70,
+      x: ((t * 26) % (VW + 200)) - 100,
       feetY: GROUND_Y, hp: 20, maxHp: 26,
       phase: t * 4, rear: 0, dying: false, flash: 0, mouth: { x: 0, y: 0 }
     };
-    Art.drawCamel(ctx, demo, t);
+    Beasts.drawBeast(ctx, demo, t, SPECIES[0]);
 
     var c1 = CYCLE[Math.floor(t * 8) % CYCLE.length];
     var c2 = CYCLE[(Math.floor(t * 8) + 3) % CYCLE.length];
-    Font.centerShadow(ctx, 'MUTANT', VW / 2, 22, c1, C.black, 4);
-    Font.centerShadow(ctx, 'CAMEL WARP', VW / 2, 52, c2, C.black, 3);
-    Font.center(ctx, 'A M C   I I', VW / 2, 76, C.lightgrey, 1);
-    Font.center(ctx, 'AFTER LLAMASOFT 1983', VW / 2, 86, C.darkgrey, 1);
-
+    Font.centerShadow(ctx, 'ATTACK OF THE', VW / 2, 10, c2, C.black, 2);
+    Font.centerShadow(ctx, 'MUTANT', VW / 2, 24, c1, C.black, 4);
+    Font.centerShadow(ctx, 'ANIMALS', VW / 2, 54, c1, C.black, 4);
+    Font.centerShadow(ctx, 'A M A   -   AFTER LLAMASOFT 1983', VW / 2, 86, C.grey, C.black, 1);
+    Font.centerShadow(ctx, 'HI SCORE ' + pad(hiScore, 6), VW / 2, 98, C.lightgreen, C.black, 1);
     if (Math.floor(t * 2) % 2 === 0) {
-      Font.center(ctx, 'PRESS ENTER TO DEFEND THE BASE', VW / 2, 106, C.white, 1);
+      Font.centerShadow(ctx, 'PRESS ENTER TO DEFEND THE BASE', VW / 2, 112, C.white, C.black, 1);
     }
-    Font.center(ctx, 'ARROWS / WASD - FLY      SPACE - FIRE', VW / 2, 122, C.cyan, 1);
-    Font.center(ctx, 'P - PAUSE      M - SOUND', VW / 2, 132, C.cyan, 1);
-    Font.center(ctx, 'SHOOT THE HUMPS - DOUBLE DAMAGE', VW / 2, 146, C.yellow, 1);
-    Font.center(ctx, 'HI SCORE ' + pad(hiScore, 6), VW / 2, 160, C.lightgreen, 1);
-    drawScannerlessFooter();
-  }
 
-  function drawScannerlessFooter() {
+    /* the strip alternates between the controls and the one tactic
+       that carries across every species */
     Art.rect(ctx, 0, SCAN_Y, VW, SCAN_H, C.black);
-    Font.center(ctx, 'LET NO CAMEL REACH THE RIGHT-HAND BASE', VW / 2, SCAN_Y + 4, C.grey, 1);
+    if (Math.floor(t / 3.5) % 2 === 0) {
+      Font.center(ctx, 'ARROWS / WASD - FLY   SPACE - FIRE   P - PAUSE   M - SOUND',
+                  VW / 2, SCAN_Y + 4, C.cyan, 1);
+    } else {
+      Font.center(ctx, 'AIM FOR THE MARKED WEAK SPOT', VW / 2, SCAN_Y + 4, C.yellow, 1);
+    }
   }
 
   function drawOverlays() {
+    var sp = speciesFor(level);
     if (state === 'intro') {
-      var boxY = 70;
-      Art.rect(ctx, 40, boxY, 240, 52, C.black);
-      Art.rect(ctx, 40, boxY, 240, 1, C.cyan);
-      Art.rect(ctx, 40, boxY + 51, 240, 1, C.cyan);
-      Font.center(ctx, 'ZONE ' + pad(level, 2), VW / 2, boxY + 10,
+      var boxY = 66;
+      Art.rect(ctx, 26, boxY, 268, 60, C.black);
+      Art.rect(ctx, 26, boxY, 268, 1, C.cyan);
+      Art.rect(ctx, 26, boxY + 59, 268, 1, C.cyan);
+      Font.center(ctx, 'ZONE ' + pad(zoneInAct(level), 2), VW / 2, boxY + 8,
                   CYCLE[Math.floor(t * 10) % CYCLE.length], 2);
-      Font.center(ctx, camelCount(level) + ' MUTANT CAMELS INBOUND', VW / 2, boxY + 30, C.white, 1);
-      Font.center(ctx, 'HOLD THE LINE', VW / 2, boxY + 40, C.yellow, 1);
+      Font.center(ctx, beastCount(level) + ' ' + sp.name + ' INBOUND', VW / 2, boxY + 28, C.white, 1);
+      Font.center(ctx, 'AIM FOR ' + sp.weakName, VW / 2, boxY + 40, sp.accent, 1);
+      Font.center(ctx, 'HOLD THE LINE', VW / 2, boxY + 50, C.yellow, 1);
     }
     if (state === 'warp') {
       var a = Math.min(1, stateTime / 1.5);
@@ -844,7 +1101,8 @@
                  CYCLE[(i + Math.floor(t * 30)) % CYCLE.length]);
       }
       Font.center(ctx, 'ZONE CLEAR', VW / 2, 70, C.white, 2);
-      Font.center(ctx, 'ENTERING HYPERSPACE', VW / 2, 96, C.cyan, 1);
+      Font.center(ctx, isActFinale(level) ? 'WARP SIGNAL DEGRADING' : 'ENTERING HYPERSPACE',
+                  VW / 2, 96, C.cyan, 1);
       Font.center(ctx, 'DODGE THE MISSILES', VW / 2, 108, C.yellow, 1);
     }
     if (state === 'hyperclear') {
@@ -859,16 +1117,15 @@
     if (state === 'over') {
       Art.rect(ctx, 0, 0, VW, VH, C.black);
       Art.drawStars(ctx, stars, t * 14, t);
-      Font.center(ctx, won ? 'BASE SAVED' : 'GAME OVER', VW / 2, 54,
+      Font.center(ctx, won ? 'BASE SAVED' : 'GAME OVER', VW / 2, 46,
                   CYCLE[Math.floor(t * 6) % CYCLE.length], 3);
-      if (won) {
-        Font.center(ctx, 'ALL 30 ZONES CLEARED', VW / 2, 78, C.lightgreen, 1);
-      }
-      Font.center(ctx, 'SCORE ' + pad(score, 6), VW / 2, 92, C.white, 1);
-      Font.center(ctx, 'HI    ' + pad(hiScore, 6), VW / 2, 104, C.yellow, 1);
-      Font.center(ctx, 'ZONE REACHED ' + pad(level, 2), VW / 2, 116, C.cyan, 1);
+      if (won) Font.center(ctx, 'EVERY SPECIES REPELLED', VW / 2, 70, C.lightgreen, 1);
+      Font.center(ctx, 'SCORE ' + pad(score, 6), VW / 2, 88, C.white, 1);
+      Font.center(ctx, 'HI    ' + pad(hiScore, 6), VW / 2, 100, C.yellow, 1);
+      Font.center(ctx, 'ZONES CLEARED ' + pad(Math.max(0, level - 1), 3), VW / 2, 112, C.cyan, 1);
+      Font.center(ctx, 'LAST SEEN  ' + sp.name, VW / 2, 124, C.lightgrey, 1);
       if (stateTime > 1.2 && Math.floor(t * 2) % 2 === 0) {
-        Font.center(ctx, 'PRESS ENTER', VW / 2, 140, C.lightgreen, 1);
+        Font.center(ctx, 'PRESS ENTER', VW / 2, 146, C.lightgreen, 1);
       }
     }
     if (paused) {
@@ -888,18 +1145,13 @@
       ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
     }
 
-    if (state === 'title') {
-      drawTitle();
-    } else if (state === 'hyper' || state === 'hyperclear') {
-      drawHyper();
-    } else if (state === 'over') {
-      /* handled entirely in drawOverlays */
-      Art.rect(ctx, 0, 0, VW, VH, C.black);
-    } else {
-      drawPlay();
-    }
+    if (state === 'title') drawTitle();
+    else if (state === 'reveal') drawReveal();
+    else if (state === 'hyper' || state === 'hyperclear') drawHyper();
+    else if (state === 'over') Art.rect(ctx, 0, 0, VW, VH, C.black);
+    else drawPlay();
 
-    drawOverlays();
+    if (state !== 'reveal') drawOverlays();
 
     if (flash > 0) {
       ctx.globalAlpha = Math.min(0.75, flash * 5);
@@ -912,21 +1164,26 @@
   /* =================================================================
    * persistence, boot, loop
    * ================================================================= */
-  function saveHi() {
-    try { localStorage.setItem('amc2.hiscore', String(hiScore)); } catch (e) {}
+  function save() {
+    try {
+      localStorage.setItem('ama.hiscore', String(hiScore));
+      localStorage.setItem('ama.bestzone', String(bestZone));
+    } catch (e) {}
   }
 
-  function loadHi() {
+  function load() {
     try {
-      var v = parseInt(localStorage.getItem('amc2.hiscore'), 10);
+      var v = parseInt(localStorage.getItem('ama.hiscore'), 10);
       if (!isNaN(v)) hiScore = v;
+      var z = parseInt(localStorage.getItem('ama.bestzone'), 10);
+      if (!isNaN(z)) bestZone = z;
     } catch (e) {}
   }
 
   function resize() {
-    var pad = 46;
+    var padY = 46;
     var sx = (global.innerWidth - 16) / VW;
-    var sy = (global.innerHeight - pad) / VH;
+    var sy = (global.innerHeight - padY) / VH;
     var s = Math.max(1, Math.floor(Math.min(sx, sy)));
     canvas.style.width = (VW * s) + 'px';
     canvas.style.height = (VH * s) + 'px';
@@ -946,8 +1203,8 @@
     canvas = document.getElementById('screen');
     ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
-    loadHi();
-    camels = []; bullets = []; spits = [];
+    load();
+    beasts = []; bullets = []; shots = [];
     particles = []; floaters = []; missiles = []; warpLines = [];
     player = { x: 40, y: 90, vx: 0, vy: 0, facing: 1, cooldown: 0, invuln: 0 };
     global.addEventListener('keydown', onKeyDown);
@@ -965,21 +1222,22 @@
   }
 
   /* exposed for debugging from the console */
-  global.AMC = {
+  global.AMA = {
     state: function () { return state; },
     debug: function () {
       return {
         state: state, score: score, lives: lives, level: level,
-        camels: camels.length,
-        hp: camels.map(function (c) { return c.hp; }),
-        playerX: Math.round(player.x), playerY: Math.round(player.y),
-        camX: Math.round(camX)
+        act: actIndex(level), species: speciesFor(level).id,
+        zone: zoneInAct(level), beasts: beasts.length,
+        hp: beasts.map(function (b) { return b.hp; }),
+        playerX: Math.round(player.x), playerY: Math.round(player.y)
       };
     },
-    skip: function () { camels.length = 0; },
+    skip: function () { beasts.length = 0; },
+    endWarp: function () { hyperTimer = 0.05; },
+    setLevel: function (n) { startLevel(n); Sound.playMusic('game'); },
     pushToBase: function () {
-      if (camels[0]) { camels[0].x = BASE_X - 30; player.x = BASE_X - 240; }
-    },
-    setLevel: function (n) { startLevel(n); }
+      if (beasts[0]) { beasts[0].x = BASE_X - 30; player.x = BASE_X - 240; }
+    }
   };
 })(window);
