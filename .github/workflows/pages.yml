@@ -4,7 +4,8 @@
 # path in index.html is relative, so it works unchanged from the project
 # subpath (https://<user>.github.io/amc2/).
 #
-# Requires Settings -> Pages -> Source to be set to "GitHub Actions".
+# The configure-pages step enables Pages itself on the first run, so there
+# is no manual repo setup step.
 name: Deploy to GitHub Pages
 
 on:
@@ -34,6 +35,10 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Creates the Pages site on first run if it does not exist yet,
+          # so the repo does not have to be configured by hand beforehand.
+          enablement: true
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@v3
