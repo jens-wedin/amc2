@@ -48,7 +48,7 @@ base and it costs you a ship.
 - **Bonus llama.** Occasionally one bolts across the ground. 500 points, and
   something rather more useful. It is the one animal on your side.
 
-**Thirty zones per species.** Clear zone 30 and the warp goes wrong. What comes
+**Ten zones per species.** Clear zone 10 and the warp goes wrong. What comes
 out the other side is not what went in. Keep going and it will happen again —
 and again. Six times, if you last.
 
@@ -99,24 +99,24 @@ title screen without one, and big events flash C64 rasterbars across the raster.
 <details>
 <summary>What is actually coming. Don't open this if you'd rather find out.</summary>
 
-Six acts of thirty zones — 180 in all. Each species owns its own silhouette,
+Six acts of ten zones — 60 in all. Each species owns its own silhouette,
 weak spot, weapon, gait and biome, and the campaign difficulty keeps climbing
 across act boundaries rather than resetting.
 
 | Act | Zones | Species | Weak spot | Weapon | Gait | Biome |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 1–30 | Camels | The hump | Arcing fireball spit | Steady amble | Desert |
-| 2 | 31–60 | Cats | The bell, at the throat | Hairballs that bounce off the ground | Creep, then pounce | Moonlit ridge |
-| 3 | 61–90 | Dogs | The rump patch, at the tail root | Flat, fast sonic barks | Brisk bouncing trot | Green hills |
-| 4 | 91–120 | Pandas | The belly | Bamboo lobbed high, shattering on impact | Slow, with pauses | Snowfield |
-| 5 | 121–150 | Elephants | The ear | A three-way water spray | Telegraphed charges | Savanna sunset |
-| 6 | 151–180 | Sheep | The face | Fast, briefly seeking bolts | Bounding hops | Lunar grey |
+| 1 | 1–10 | Camels | The hump | Arcing fireball spit | Steady amble | Desert |
+| 2 | 11–20 | Cats | The bell, at the throat | Hairballs that bounce off the ground | Creep, then pounce | Moonlit ridge |
+| 3 | 21–30 | Dogs | The rump patch, at the tail root | Flat, fast sonic barks | Brisk bouncing trot | Green hills |
+| 4 | 31–40 | Pandas | The belly | Bamboo lobbed high, shattering on impact | Slow, with pauses | Snowfield |
+| 5 | 41–50 | Elephants | The ear | A three-way water spray | Telegraphed charges | Savanna sunset |
+| 6 | 51–60 | Sheep | The face | Fast, briefly seeking bolts | Bounding hops | Lunar grey |
 
 The weak spots are deliberately spread around the body — top-middle, front-low,
 rear-high, underneath, front-high — so each reveal forces a new approach angle
 rather than a re-skin of the last one.
 
-Clearing zone 180 wins the game.
+Clearing zone 60 wins the game.
 
 </details>
 
@@ -144,7 +144,8 @@ Findings that shaped the design, gathered before writing any code:
 - Clearing a level dropped you into a **"hyperspace" sequence** where you had to
   survive high-speed missiles.
 - 30 levels; you could start at any of them, and the only difference was the
-  speed of the camels and their shots. That 30 became the length of an act here.
+  speed of the camels and their shots. Acts here run ten zones, so a new
+  species arrives about three times as often as the original changed pace.
 - Minter's house style: gameplay first, surrealism over realism, psychedelic
   visuals, ruminants everywhere, quirky audio.
 
@@ -205,7 +206,7 @@ High scores persist in `localStorage` under `ama.hiscore` / `ama.bestzone`.
 ## Debug console
 
 `AMA.debug()` dumps game state, `AMA.skip()` clears the current zone,
-`AMA.setLevel(n)` jumps to a zone (31, 61, 91, 121, 151 start each act),
+`AMA.setLevel(n)` jumps to a zone (11, 21, 31, 41, 51 start each act),
 `AMA.endWarp()` cuts a hyperspace run short, `AMA.boot()` replays the tape
 loader, `AMA.hints(n)` opens the hint book at a page, and `AMA.egg('boing')` /
 `AMA.egg('llama')` drop an easter egg in front of you.

@@ -16,7 +16,7 @@
   var TRACER = [C.white, C.yellow, C.cyan, C.lightgreen];
 
   var SPECIES = Beasts.SPECIES;
-  var ZONES_PER_ACT = 30;
+  var ZONES_PER_ACT = 10;
   var MAX_LEVEL = SPECIES.length * ZONES_PER_ACT;
 
   /* ---- fixed geometry ---------------------------------------------- */
@@ -78,19 +78,24 @@
   function speciesFor(lv) { return SPECIES[actIndex(lv)]; }
   function isActFinale(lv) { return zoneInAct(lv) === ZONES_PER_ACT; }
 
+  /* Per-zone rates are tuned to the act length: an act has to arrive
+     somewhere by its last zone, so a shorter act needs steeper steps.
+     Change ZONES_PER_ACT and these want rescaling with it. */
   function beastHp(lv) {
     var sp = speciesFor(lv);
-    return Math.round(sp.hp * (1 + (zoneInAct(lv) - 1) * 0.065) * (1 + actIndex(lv) * 0.20));
+    return Math.round(sp.hp * (1 + (zoneInAct(lv) - 1) * 0.11) * (1 + actIndex(lv) * 0.20));
   }
   function beastSpeed(lv) {
     var sp = speciesFor(lv);
-    return Math.min(46, sp.speed * (1 + (zoneInAct(lv) - 1) * 0.03) * (1 + actIndex(lv) * 0.14));
+    return Math.min(46, sp.speed * (1 + (zoneInAct(lv) - 1) * 0.055) * (1 + actIndex(lv) * 0.14));
   }
   function beastCount(lv) {
-    return Math.min(8, speciesFor(lv).count + Math.floor((zoneInAct(lv) - 1) / 10));
+    /* one extra beast every four zones -- at a divisor of 10 a ten-zone
+       act would never grow the herd at all */
+    return Math.min(8, speciesFor(lv).count + Math.floor((zoneInAct(lv) - 1) / 4));
   }
   function shotSpeed(lv) {
-    return 62 + (zoneInAct(lv) - 1) * 3.5 + actIndex(lv) * 10;
+    return 62 + (zoneInAct(lv) - 1) * 6 + actIndex(lv) * 10;
   }
 
   /* Each species shift also upgrades the Antimat cannon, so the player
@@ -473,7 +478,7 @@
       b.cooldown -= dt;
       if (Math.abs((player.x + 8) - b.x) < 210 && b.cooldown <= 0) {
         var range = sp.fireEvery;
-        b.cooldown = rnd(range[0], range[1]) / (1 + (level - 1) * 0.012);
+        b.cooldown = rnd(range[0], range[1]) / (1 + (level - 1) * 0.036);
         fireWeapon(b, sp, level);
       }
 
@@ -682,10 +687,10 @@
       if (w.x < -30) { w.x = VW + rnd(0, 40); w.y = rnd(HUD_H + 4, SCAN_Y - 4); }
     }
 
-    var rate = 1.6 + level * 0.06 + actIndex(level) * 0.5;
+    var rate = 1.6 + level * 0.18 + actIndex(level) * 0.5;
     if (Math.random() < dt * rate) {
       var fromRight = Math.random() < 0.82;
-      var speed = (170 + level * 2.5 + actIndex(level) * 20) * rnd(0.85, 1.25);
+      var speed = (170 + level * 5 + actIndex(level) * 20) * rnd(0.85, 1.25);
       var m = {
         x: fromRight ? VW + 8 : -18,
         y: rnd(HUD_H + 8, SCAN_Y - 12),
@@ -1363,7 +1368,8 @@
       if (won) Font.center(ctx, 'EVERY SPECIES REPELLED', VW / 2, 70, C.lightgreen, 1);
       Font.center(ctx, 'SCORE ' + pad(score, 6), VW / 2, 88, C.white, 1);
       Font.center(ctx, 'HI    ' + pad(hiScore, 6), VW / 2, 100, C.yellow, 1);
-      Font.center(ctx, 'ZONES CLEARED ' + pad(Math.max(0, level - 1), 3), VW / 2, 112, C.cyan, 1);
+      Font.center(ctx, 'ZONES CLEARED ' + pad(won ? level : Math.max(0, level - 1), 3),
+                  VW / 2, 112, C.cyan, 1);
       Font.center(ctx, 'LAST SEEN  ' + sp.name, VW / 2, 124, C.lightgrey, 1);
       if (stateTime > 1.2 && Math.floor(t * 2) % 2 === 0) {
         Font.center(ctx, 'PRESS ENTER', VW / 2, 146, C.lightgreen, 1);
