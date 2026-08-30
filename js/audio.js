@@ -185,7 +185,7 @@
     spit: function () {
       tone({ freq: 240, to: 90, dur: 0.16, type: 'sawtooth', vol: 0.12 });
     },
-    camelDeath: function () {
+    beastDeath: function () {
       noise({ freq: 1800, to: 60, dur: 1.1, vol: 0.4 });
       tone({ freq: 320, to: 40, dur: 1.0, type: 'sawtooth', vol: 0.2 });
       for (var i = 0; i < 6; i++) {
@@ -210,6 +210,56 @@
     llama: function () {
       tone({ freq: 300, to: 1400, dur: 0.25, type: 'square', vol: 0.16 });
     },
+
+    /* ---- per-species weapons ---- */
+    bark: function () {
+      tone({ freq: 420, to: 130, dur: 0.13, type: 'square', vol: 0.16 });
+      noise({ freq: 900, to: 300, dur: 0.12, vol: 0.18, type: 'bandpass', q: 1.5 });
+    },
+    spray: function () {
+      noise({ freq: 3200, to: 900, dur: 0.3, vol: 0.16, type: 'highpass' });
+    },
+    bolt: function () {
+      tone({ freq: 1500, to: 500, dur: 0.12, type: 'sawtooth', vol: 0.13 });
+    },
+
+    /* ---- the species-shift reveal ---- */
+    alarm: function () {
+      for (var i = 0; i < 5; i++) {
+        tone({ freq: 660, to: 990, dur: 0.16, type: 'square', vol: 0.16, delay: i * 0.34 });
+        tone({ freq: 990, to: 660, dur: 0.16, type: 'square', vol: 0.16, delay: i * 0.34 + 0.17 });
+      }
+    },
+    revealRumble: function () {
+      tone({ freq: 40, to: 110, dur: 2.4, type: 'sawtooth', vol: 0.24 });
+      noise({ freq: 90, to: 500, dur: 2.4, vol: 0.16 });
+    },
+    revealHit: function () {
+      noise({ freq: 6000, to: 80, dur: 1.4, vol: 0.42 });
+      tone({ freq: 160, to: 30, dur: 1.6, type: 'sawtooth', vol: 0.28 });
+      var n = [48, 55, 60, 67, 72];
+      for (var j = 0; j < n.length; j++) {
+        tone({ freq: midi(n[j]), dur: 0.9, type: 'square', vol: 0.12, delay: j * 0.05 });
+      }
+    },
+    /* ---- retro easter eggs ---- */
+    boing: function () {
+      tone({ freq: 180, to: 620, dur: 0.13, type: 'sine', vol: 0.22 });
+      tone({ freq: 90, to: 300, dur: 0.16, type: 'triangle', vol: 0.16 });
+    },
+    gridSweep: function () {
+      tone({ freq: 2600, to: 180, dur: 0.55, type: 'square', vol: 0.16 });
+      noise({ freq: 5000, to: 300, dur: 0.55, vol: 0.2, type: 'bandpass', q: 2 });
+    },
+    tapeLoad: function () {
+      /* the two-tone shriek of a tape loader, mercifully brief */
+      for (var i = 0; i < 26; i++) {
+        tone({ freq: i % 2 ? 1180 : 2360, dur: 0.1, type: 'square',
+               vol: 0.05, delay: i * 0.115 });
+      }
+      noise({ freq: 2600, dur: 3.0, vol: 0.045, type: 'bandpass', q: 0.7 });
+    },
+
     blip: function () {
       tone({ freq: 880, dur: 0.05, type: 'square', vol: 0.14 });
     },

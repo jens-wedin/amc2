@@ -1,7 +1,8 @@
 /* ------------------------------------------------------------------
  * sprites.js -- everything that puts pixels on the 320x200 screen.
- * The C64 palette is authentic (VICE values); the camels are plotted
- * from unit-grid blocks so their necks and legs can be animated.
+ * The C64 palette is authentic (VICE values). Species artwork lives
+ * in beasts.js; everything shared -- ship, terrain, base, stars --
+ * lives here.
  * ------------------------------------------------------------------ */
 (function (global) {
   'use strict';
@@ -30,7 +31,7 @@
                C.lightred, C.orange, C.white];
 
   /* Camel damage ramp. Deliberately skips the ridge colours (purple,
-     blue, dark grey) so a wounded camel never camouflages itself
+     blue, dark grey) so a wounded beast never camouflages itself
      against the mountains behind it. */
   var DAMAGE = [C.yellow, C.lightgreen, C.cyan, C.lightblue,
                 C.lightred, C.orange, C.white];
@@ -85,141 +86,6 @@
     }
   }
 
-  /* ---- camel --------------------------------------------------------
-   * Drawn on a 30x24 unit grid, 2px per unit -> 60x48 pixels, facing
-   * right (toward your base). Origin passed in is the mid-point of the
-   * feet, which is also what the walk/collision code uses.
-   */
-  var U = 3;                 /* pixels per grid unit -> 90x72 px camels */
-  var CAMEL_W = 30 * U;
-  var CAMEL_H = 24 * U;
-
-  function camelPalette(hpFrac, t, dying) {
-    if (dying) return CYCLE[Math.floor(t * 24) % CYCLE.length];
-    var wounded = 1 - hpFrac;
-    if (wounded > 0.82) {
-      /* "all multicoloured" -- the tell-tale that it is about to fold. */
-      return CYCLE[Math.floor(t * 16) % CYCLE.length];
-    }
-    var idx = Math.min(DAMAGE.length - 1, Math.floor(wounded * DAMAGE.length));
-    return DAMAGE[idx];
-  }
-
-  /**
-   * Draws one mutant camel, facing right.
-   * @param cam {x, feetY, hp, maxHp, phase, rear (0..1), dying, flash}
-   *        cam.x is the mid-point of the feet; cam.mouth is written back
-   *        so the spit code knows where the fireballs start.
-   */
-  function drawCamel(ctx, cam, t) {
-    var left = Math.round(cam.x - CAMEL_W / 2);
-    var top = Math.round(cam.feetY - CAMEL_H);
-    var hpFrac = Math.max(0, cam.hp / cam.maxHp);
-    var base = cam.flash > 0 ? C.white : camelPalette(hpFrac, t, cam.dying);
-    var ink = C.black;
-    var shade = cam.flash > 0 ? C.lightgrey : C.brown;
-
-    var bob = Math.sin(cam.phase * 2) * 0.4;
-    var swingA = Math.sin(cam.phase) * 1.6;
-    var swingB = Math.sin(cam.phase + Math.PI) * 1.6;
-
-    /* Collect the silhouette in grid units, then stamp it twice: once
-       fattened in black for a hard outline, once in the body colour. */
-    var parts = [];
-    function p(x, y, w, h) { parts.push([x, y + bob, w, h]); }
-
-    /* body barrel */
-    p(5, 9, 18, 1);
-    p(3, 10, 22, 1);
-    p(2, 11, 24, 5);
-    p(4, 16, 20, 1);
-
-    /* rear hump (smaller) and front hump (the weak spot) */
-    p(8, 6, 4, 1);  p(7, 7, 6, 1);  p(6, 8, 8, 1);
-    p(16, 4, 4, 1); p(15, 5, 6, 1); p(14, 6, 8, 3);
-
-    /* tail */
-    p(0, 10, 3, 2);
-
-    /* neck: a tapered column that rears up as the camel is destabilised */
-    var slant = 0.62 - cam.rear * 0.5;      /* 0.62 = walking, ~0.1 = reared */
-    var risen = cam.rear * 3.4;
-    for (var k = 0; k < 8; k++) {
-      p(21 + k * slant, 10 - k - risen * (k / 8), 4 - k * 0.13, 1.05 + cam.rear * 0.8);
-    }
-    var hx = 21 + 8 * slant;
-    var hy = 2 - risen;
-
-    /* head, ears and muzzle */
-    p(hx + 2, hy - 2, 1, 2);
-    p(hx + 4, hy - 2, 1, 2);
-    p(hx + 1, hy, 5, 3);
-    p(hx + 5, hy + 1, 3, 2);
-
-    function stamp(list, col, grow) {
-      ctx.fillStyle = col;
-      for (var i = 0; i < list.length; i++) {
-        var r = list[i];
-        ctx.fillRect(
-          Math.round(left + r[0] * U) - grow,
-          Math.round(top + r[1] * U) - grow,
-          Math.round(r[2] * U) + grow * 2,
-          Math.round(r[3] * U) + grow * 2
-        );
-      }
-    }
-
-    /* legs -- drawn behind the body, far pair in shadow */
-    var legs = [
-      [5 + swingB, 15, 3, 9, shade],
-      [16 + swingA, 15, 3, 9, shade],
-      [8 + swingA, 15, 4, 9, base],
-      [19 + swingB, 15, 4, 9, base]
-    ];
-    for (var l = 0; l < legs.length; l++) {
-      var lg = legs[l];
-      ctx.fillStyle = ink;
-      ctx.fillRect(left + lg[0] * U - 1, top + lg[1] * U, lg[2] * U + 2, lg[3] * U);
-      ctx.fillStyle = lg[4];
-      ctx.fillRect(left + lg[0] * U, top + lg[1] * U, lg[2] * U, lg[3] * U - 2);
-      ctx.fillStyle = shade;
-      ctx.fillRect(left + lg[0] * U - 1, top + (lg[1] + lg[3]) * U - 3, lg[2] * U + 3, 3);
-    }
-
-    stamp(parts, ink, 2);
-    stamp(parts, base, 0);
-
-    /* belly shadow, hump crest highlight, eye */
-    ctx.fillStyle = shade;
-    ctx.fillRect(left + 4 * U, top + (15.4 + bob) * U, 20 * U, U);
-    ctx.fillStyle = cam.flash > 0 ? C.white : C.lightgreen;
-    ctx.fillRect(left + 16 * U, top + (4 + bob) * U, 4 * U, U);   /* aim here */
-    ctx.fillStyle = ink;
-    ctx.fillRect(left + (hx + 3) * U, top + (hy + bob + 0.6) * U, U, U);
-
-    cam.mouth = {
-      x: left + (hx + 8) * U,
-      y: top + (hy + bob + 2) * U
-    };
-  }
-
-  /* Local-space hit boxes, in grid units, relative to (left, top). */
-  var HUMP_BOX = { x: 6, y: 3.5, w: 16, h: 6 };
-  var BODY_BOX = { x: 1, y: 9, w: 25, h: 8 };
-  var NECK_BOX = { x: 21, y: 0, w: 11, h: 10 };
-
-  function camelHit(cam, px, py) {
-    var left = cam.x - CAMEL_W / 2, top = cam.feetY - CAMEL_H;
-    var lx = (px - left) / U, ly = (py - top) / U;
-    function inBox(b) {
-      return lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h;
-    }
-    if (inBox(HUMP_BOX)) return 'hump';
-    if (inBox(BODY_BOX)) return 'body';
-    if (inBox(NECK_BOX)) return 'neck';
-    return null;
-  }
-
   /* ---- bonus llama (Minter tax) ------------------------------------- */
   function drawLlama(ctx, x, feetY, phase, t) {
     var col = CYCLE[Math.floor(t * 10) % CYCLE.length];
@@ -238,8 +104,29 @@
     rect(ctx, x + 13, feetY - 18, 1, 1, C.black);
   }
 
+  /* ---- the Boing ball ----------------------------------------------
+   * The Amiga's calling card: a checkered sphere that will not stop
+   * bouncing. The checker pattern is offset by `spin`, which is what
+   * sells the rotation.
+   */
+  function drawBoing(ctx, cx, cy, rad, spin) {
+    var cell = Math.max(2, Math.round(rad / 2.4));
+    cx = Math.round(cx); cy = Math.round(cy);
+    for (var dy = -rad; dy < rad; dy++) {
+      var hw = Math.floor(Math.sqrt(rad * rad - dy * dy));
+      if (hw <= 0) continue;
+      /* keyline run first, then the checker over it */
+      rect(ctx, cx - hw - 1, cy + dy, hw * 2 + 2, 1, C.black);
+      var v = Math.floor((dy + rad) / cell);
+      for (var dx = -hw; dx < hw; dx++) {
+        var u = Math.floor((dx + rad + spin) / cell);
+        rect(ctx, cx + dx, cy + dy, 1, 1, ((u + v) & 1) ? C.white : C.lightred);
+      }
+    }
+  }
+
   /* ---- terrain ------------------------------------------------------
-   * Three parallax ridges plus the flat strip the camels walk on.
+   * Parallax ridges plus the strip the beasts walk on.
    */
   var ridgeCache = {};
 
@@ -268,19 +155,17 @@
     ctx.fill();
   }
 
-  function drawTerrain(ctx, camX, groundY, level, t) {
+  /** Three parallax ridges plus the strip the beasts walk on, coloured
+      by the current act's biome. */
+  function drawTerrain(ctx, camX, groundY, level, t, biome) {
     var seed = 1337 + level * 77;
-    /* far range */
-    drawRidge(ctx, ridge(seed, 24, 46, groundY - 34), 34, camX * 0.15, 0, C.blue, groundY);
-    /* mid range */
-    drawRidge(ctx, ridge(seed + 1, 20, 34, groundY - 18), 26, camX * 0.35, 0, C.purple, groundY);
-    /* near range */
-    drawRidge(ctx, ridge(seed + 2, 18, 20, groundY - 4), 21, camX * 0.62, 0, C.darkgrey, groundY);
+    drawRidge(ctx, ridge(seed, 24, 46, groundY - 34), 34, camX * 0.15, 0, biome.far, groundY);
+    drawRidge(ctx, ridge(seed + 1, 20, 34, groundY - 18), 26, camX * 0.35, 0, biome.mid, groundY);
+    drawRidge(ctx, ridge(seed + 2, 18, 20, groundY - 4), 21, camX * 0.62, 0, biome.near, groundY);
 
-    /* the desert floor the camels trundle over */
-    rect(ctx, 0, groundY, 320, 200 - groundY, C.orange);
-    rect(ctx, 0, groundY, 320, 1, C.yellow);
-    ctx.fillStyle = C.brown;
+    rect(ctx, 0, groundY, 320, 200 - groundY, biome.ground);
+    rect(ctx, 0, groundY, 320, 1, biome.edge);
+    ctx.fillStyle = biome.fleck;
     var step = 16;
     var off = Math.floor(camX) % step;
     for (var x = -off; x < 320; x += step) {
@@ -331,14 +216,11 @@
     rect: rect,
     mulberry32: mulberry32,
     drawShip: drawShip,
-    drawCamel: drawCamel,
-    camelHit: camelHit,
     drawLlama: drawLlama,
+    drawBoing: drawBoing,
     drawTerrain: drawTerrain,
     drawBase: drawBase,
     makeStars: makeStars,
-    drawStars: drawStars,
-    CAMEL_W: CAMEL_W,
-    CAMEL_H: CAMEL_H
+    drawStars: drawStars
   };
 })(window);
