@@ -2,7 +2,7 @@
 #
 # There is nothing to build: the repo root is already the site, and every
 # path in index.html is relative, so it works unchanged from the project
-# subpath (https://<user>.github.io/amc2/).
+# subpath (https://<user>.github.io/ama/).
 #
 # One-time setup, and it can only be done by a repo admin: turn on
 # Settings -> Pages -> Source = "GitHub Actions". The enablement flag below

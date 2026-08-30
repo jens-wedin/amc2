@@ -5,7 +5,7 @@ A browser shoot-'em-up played entirely on the keyboard, built as an homage to
 somewhere the original didn't go. No build step, no dependencies, no assets.
 
 ```
-git clone <this repo> && cd amc2
+git clone <this repo> && cd ama
 python3 -m http.server 8000     # or: npx serve .
 # then open http://localhost:8000
 ```
